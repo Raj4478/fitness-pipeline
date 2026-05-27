@@ -1,8 +1,11 @@
 """
 Fitness niche topic pool.
-Topics rotate daily — each one generates a different video.
-Mix of myth-busting, science facts, and trending health topics.
+TopicBank picks unused topics in rotation so videos never repeat.
 """
+
+import json
+import random
+from pathlib import Path
 
 TOPICS = {
     "fitness": [
@@ -28,3 +31,29 @@ TOPICS = {
         "cold water after workout myth",
     ]
 }
+
+USED_TOPICS_FILE = Path("data/used_topics.json")
+
+
+class TopicBank:
+    def __init__(self):
+        USED_TOPICS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        if USED_TOPICS_FILE.exists():
+            self._used: dict = json.loads(USED_TOPICS_FILE.read_text())
+        else:
+            self._used = {}
+
+    def pick_unused(self, niche: str) -> str:
+        all_topics = TOPICS.get(niche, [])
+        used = set(self._used.get(niche, []))
+        unused = [t for t in all_topics if t not in used]
+
+        # Reset if all used
+        if not unused:
+            unused = all_topics
+            self._used[niche] = []
+
+        topic = random.choice(unused)
+        self._used.setdefault(niche, []).append(topic)
+        USED_TOPICS_FILE.write_text(json.dumps(self._used, indent=2))
+        return topic
