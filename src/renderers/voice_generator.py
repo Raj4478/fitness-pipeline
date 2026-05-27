@@ -64,7 +64,11 @@ class VoiceGenerator:
         self.settings = settings
 
     async def generate(self, text: str, topic: Literal["fitness"] | str = "") -> Path:
-        """Generate voiceover. Uses configured voice first, then a free premade voice."""
+        """
+        Generate voiceover.
+        Cycles through all configured ElevenLabs API keys.
+        Falls back to Windows TTS if all keys are exhausted.
+        """
         configured_voice_id = self.settings.elevenlabs_voice_id.strip()
         if configured_voice_id:
             voice_id, mood = configured_voice_id, "configured"
@@ -75,45 +79,60 @@ class VoiceGenerator:
         audio_id = uuid.uuid4().hex[:8]
         audio_path = OUTPUT_DIR / f"voice_{audio_id}.mp3"
 
-        async with httpx.AsyncClient(timeout=60) as client:
-            resp = await client.post(
-                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
-                headers={
-                    "xi-api-key": self.settings.elevenlabs_api_key,
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "text": text,
-                    "model_id": self.settings.elevenlabs_model_id,
-                    "voice_settings": {
-                        "stability": 0.4,
-                        "similarity_boost": 0.8,
-                        "style": 0.3,
-                        "use_speaker_boost": True,
-                    },
-                },
-            )
+        api_keys = self.settings.elevenlabs_api_keys()
+        if not api_keys:
+            logger.warning("No ElevenLabs API keys configured. Falling back to Windows TTS.")
+            return self._generate_windows_tts(text, audio_id)
+
+        last_error = None
+        for idx, api_key in enumerate(api_keys, start=1):
             try:
-                resp.raise_for_status()
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code in {401, 402, 403}:
-                    logger.warning(
-                        "ElevenLabs unavailable (%s). Falling back to local Windows TTS.",
-                        exc.response.status_code,
+                logger.info("Trying ElevenLabs key %d/%d", idx, len(api_keys))
+                async with httpx.AsyncClient(timeout=60) as client:
+                    resp = await client.post(
+                        f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
+                        headers={
+                            "xi-api-key": api_key,
+                            "Content-Type": "application/json",
+                        },
+                        json={
+                            "text": text,
+                            "model_id": self.settings.elevenlabs_model_id,
+                            "voice_settings": {
+                                "stability": 0.4,
+                                "similarity_boost": 0.8,
+                                "style": 0.3,
+                                "use_speaker_boost": True,
+                            },
+                        },
                     )
-                    return self._generate_windows_tts(text, audio_id)
+                    resp.raise_for_status()
+
+                audio_path.write_bytes(resp.content)
+                size_kb = audio_path.stat().st_size // 1024
+                logger.info(
+                    "Audio saved: %s (%d KB) | key=%d voice=%s mood=%s",
+                    audio_path, size_kb, idx, voice_id, mood,
+                )
+                return audio_path
+
+            except httpx.HTTPStatusError as exc:
+                code = exc.response.status_code
+                if code in {401, 402, 403}:
+                    logger.warning(
+                        "ElevenLabs key %d/%d exhausted (HTTP %d) — trying next key",
+                        idx, len(api_keys), code,
+                    )
+                    last_error = exc
+                    continue
                 raise
 
-        audio_path.write_bytes(resp.content)
-        size_kb = audio_path.stat().st_size // 1024
-        logger.info(
-            "Audio saved: %s (%d KB) | voice=%s mood=%s",
-            audio_path,
-            size_kb,
-            voice_id,
-            mood,
+        # All keys exhausted — fall back to Windows TTS
+        logger.warning(
+            "All %d ElevenLabs keys exhausted. Falling back to local Windows TTS.",
+            len(api_keys),
         )
-        return audio_path
+        return self._generate_windows_tts(text, audio_id)
 
     def _generate_windows_tts(self, text: str, audio_id: str) -> Path:
         """Generate a local WAV voiceover using Windows SAPI."""

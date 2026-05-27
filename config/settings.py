@@ -42,9 +42,22 @@ class Settings(BaseSettings):
     groq_model: str = "llama-3.1-8b-instant"
 
     # ── ElevenLabs ────────────────────────────────────────────────────
-    elevenlabs_api_key: str = Field(default="", description="ElevenLabs API key")
+    # Add up to 3 fallback keys — pipeline cycles through them when one runs out
+    elevenlabs_api_key: str = Field(default="", description="ElevenLabs API key (primary)")
+    elevenlabs_api_key_2: str = Field(default="", description="ElevenLabs API key (fallback 2)")
+    elevenlabs_api_key_3: str = Field(default="", description="ElevenLabs API key (fallback 3)")
     elevenlabs_voice_id: str = "pNInz6obpgDQGcFmaJgB"
     elevenlabs_model_id: str = "eleven_multilingual_v2"
+
+    def elevenlabs_api_keys(self) -> list[str]:
+        """Returns all configured ElevenLabs API keys in priority order."""
+        return [
+            k for k in [
+                self.elevenlabs_api_key,
+                self.elevenlabs_api_key_2,
+                self.elevenlabs_api_key_3,
+            ] if k.strip()
+        ]
 
     # ── Creatomate ────────────────────────────────────────────────────
     creatomate_api_key: str = Field(default="", description="Creatomate API key")
