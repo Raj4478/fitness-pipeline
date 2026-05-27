@@ -3,7 +3,7 @@ Local Video Renderer — ffmpeg, styled captions, background music, outro card.
 No segfaults. No ImageMagick. No PIL.
 """
 
-import logging, math, textwrap, uuid, subprocess, shutil
+import logging, math, re, textwrap, uuid, subprocess, shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -18,7 +18,6 @@ CAPTION_FONT_SIZE = 58
 HOOK_FONT_SIZE = 68
 CAPTION_Y_POSITION = 0.72
 HOOK_Y_POSITION = 0.10
-WORDS_PER_CAPTION = 5
 BG_MUSIC_VOLUME = 0.08
 OUTRO_DURATION = 3.0
 
@@ -129,17 +128,20 @@ class LocalVideoRenderer:
                 f":enable='between(t,0,{hook_dur:.2f})'"
             )
 
-        words = body_text.split()
-        if words:
-            chunks = [" ".join(words[i:i+WORDS_PER_CAPTION])
-                      for i in range(0, len(words), WORDS_PER_CAPTION)]
-            chunk_dur = (voice_dur - hook_dur) / len(chunks)
+        chunks = self._caption_chunks(body_text)
+        if chunks:
+            available_dur = max(1.0, voice_dur - hook_dur)
+            weights = [max(8, len(chunk)) for chunk in chunks]
+            total_weight = sum(weights)
+            cursor = hook_dur
             cap_y = int(TARGET_H * CAPTION_Y_POSITION)
             cap_line_h = CAPTION_FONT_SIZE + 12
 
-            for i, chunk in enumerate(chunks):
-                ts = hook_dur + i * chunk_dur
-                te = ts + chunk_dur
+            for chunk, weight in zip(chunks, weights):
+                chunk_dur = available_dur * (weight / total_weight)
+                ts = cursor
+                te = min(voice_dur, ts + chunk_dur)
+                cursor = te
                 enable = f"between(t,{ts:.3f},{te:.3f})"
                 lines = textwrap.wrap(chunk, width=24) or [chunk]
                 box_h = len(lines) * cap_line_h + 40
@@ -250,6 +252,36 @@ class LocalVideoRenderer:
             if Path(f).exists():
                 return f.replace("\\", "/").replace("C:/", "C\\:/")
         raise RuntimeError("No font found.")
+
+    def _caption_chunks(self, text: str) -> list[str]:
+        """Split captions into readable sentence/phrase chunks."""
+        text = re.sub(r"\s+", " ", text.strip())
+        if not text:
+            return []
+
+        sentences = [
+            part.strip()
+            for part in re.split(r"(?<=[.!?])\s+", text)
+            if part.strip()
+        ]
+        chunks = []
+        for sentence in sentences:
+            if len(sentence) <= 54:
+                chunks.append(sentence)
+                continue
+
+            words = sentence.split()
+            current = []
+            for word in words:
+                candidate = " ".join(current + [word])
+                if current and len(candidate) > 46:
+                    chunks.append(" ".join(current))
+                    current = [word]
+                else:
+                    current.append(word)
+            if current:
+                chunks.append(" ".join(current))
+        return chunks
 
     def _clean(self, text):
         for ch in ["'", ":", "\\", "[", "]", "=", ",", "%", '"', "{", "}"]:

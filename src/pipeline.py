@@ -67,7 +67,7 @@ async def run_pipeline(
         # ── 4. Generate voiceover ──────────────────────────────────────
         voice_gen = VoiceGenerator(settings)
         audio_path = await voice_gen.generate(
-            text=script.full_narration,
+            text=script.tts_text,
             topic=selected_topic,
         )
         logger.info("Voiceover generated: %s", audio_path)
