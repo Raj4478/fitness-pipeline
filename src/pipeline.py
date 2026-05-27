@@ -58,7 +58,10 @@ async def run_pipeline(
 
         # ── 3. Fetch stock video ───────────────────────────────────────
         fetcher = VideoAssetFetcher(settings)
-        video_asset = await fetcher.fetch(query=script.visual_query, niche=niche)
+        video_asset = await fetcher.fetch(
+            topic=selected_topic,
+            visual_query=script.visual_query,
+        )
         logger.info("Video asset fetched: %s", video_asset.url)
 
         # ── 4. Generate voiceover ──────────────────────────────────────
