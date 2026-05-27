@@ -1,6 +1,8 @@
 """
-Video Asset Fetcher
-Searches Pexels for relevant stock footage and returns a usable URL.
+Video Asset Fetcher — Pexels API
+Topic-aware curated queries for fitness content.
+Falls back to LLM-generated query if topic not in map.
+Tries multiple queries until HD portrait footage found.
 """
 
 import logging
@@ -8,14 +10,48 @@ import random
 from dataclasses import dataclass
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
-FALLBACK_QUERIES = {
-    "finance": ["money coins", "city business", "laptop working"],
-    "story": ["people talking", "city night", "dramatic sky"],
+# ── Curated Pexels queries per fitness topic ───────────────────────────────────
+TOPIC_QUERY_MAP = {
+    "protein":          ["athlete eating meal", "bodybuilder food prep", "gym nutrition"],
+    "protein myths":    ["bodybuilder eating food", "muscle food healthy", "athlete meal prep"],
+    "vitamin d":        ["sunlight morning outdoor", "person sun exposure", "morning sunrise fitness"],
+    "vitamin":          ["healthy supplements pills", "morning sunlight person", "nutrition health"],
+    "sleep":            ["person sleeping bed", "night sleep rest", "bedroom sleeping"],
+    "sleep muscle":     ["athlete sleeping recovery", "person sleeping night", "muscle recovery rest"],
+    "walking":          ["person walking outdoor", "morning walk park", "walking fitness"],
+    "running":          ["person running outdoor", "athlete running track", "morning run fitness"],
+    "cardio":           ["person running gym", "cardio workout treadmill", "fitness cardio"],
+    "gym":              ["gym workout weights", "man lifting weights gym", "bodybuilder training"],
+    "workout":          ["intense gym workout", "man exercise weights", "gym training session"],
+    "training":         ["athlete training gym", "weight training man", "gym workout intense"],
+    "weight":           ["weight loss transformation", "person exercising gym", "fitness workout"],
+    "fat":              ["body fat fitness", "weight loss exercise", "gym workout intense"],
+    "intermittent":     ["empty plate clock", "fasting food table", "meal timing food"],
+    "fasting":          ["empty plate morning", "clock food fasting", "intermittent fasting"],
+    "sugar":            ["sugar food unhealthy", "person avoiding sugar", "healthy vs unhealthy food"],
+    "sugar free":       ["diet drink soda", "sugar free beverage", "unhealthy drink"],
+    "stress":           ["stressed person office", "meditation calm man", "stress relief yoga"],
+    "gut":              ["healthy food gut", "probiotic food bowl", "digestive health food"],
+    "bmi":              ["body measurement fitness", "person scale weight", "fitness measurement"],
+    "creatine":         ["supplement powder gym", "athlete supplement drink", "gym pre workout"],
+    "hydration":        ["person drinking water", "athlete water bottle", "hydration fitness"],
+    "overtraining":     ["tired athlete rest", "exhausted gym person", "muscle fatigue rest"],
+    "yoga":             ["yoga poses outdoor", "man yoga meditation", "yoga fitness calm"],
+    "sitting":          ["person sitting desk office", "office worker chair", "sedentary lifestyle"],
+    "morning workout":  ["morning gym workout", "sunrise exercise outdoor", "early morning fitness"],
+    "evening workout":  ["evening gym workout", "night fitness training", "gym after work"],
+    "processed food":   ["junk food unhealthy", "processed food packaging", "fast food unhealthy"],
 }
+
+FALLBACK_QUERIES = [
+    "gym workout intense",
+    "fitness training man",
+    "athlete exercise outdoor",
+    "bodybuilder gym weights",
+]
 
 
 @dataclass
@@ -24,71 +60,76 @@ class VideoAsset:
     width: int
     height: int
     duration: int
-    pexels_id: int
 
 
 class VideoAssetFetcher:
-    BASE_URL = "https://api.pexels.com/videos/search"
-
     def __init__(self, settings):
         self.settings = settings
 
-    async def fetch(self, query: str, niche: str = "finance") -> VideoAsset:
-        """Fetch a vertical (portrait) stock video. Falls back on empty results."""
-        try:
-            asset = await self._search(query)
-            if asset:
-                return asset
-            logger.warning("No results for '%s', trying fallback query", query)
-        except Exception as exc:
-            logger.warning("Pexels fetch failed for '%s': %s", query, exc)
+    async def fetch(self, topic: str, visual_query: str = "") -> VideoAsset:
+        """
+        Fetch portrait fitness footage.
+        Priority: curated topic map → LLM visual_query → fallback queries.
+        """
+        queries = self._get_queries(topic, visual_query)
 
-        # Fallback: try a generic query for the niche
-        fallback_query = random.choice(FALLBACK_QUERIES.get(niche, ["nature landscape"]))
-        logger.info("Using fallback query: %s", fallback_query)
-        return await self._search(fallback_query, required=True)
-
-    @retry(
-        retry=retry_if_exception_type(httpx.HTTPError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=8),
-    )
-    async def _search(self, query: str, required: bool = False) -> VideoAsset | None:
         async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(
-                self.BASE_URL,
-                headers={"Authorization": self.settings.pexels_api_key},
-                params={
-                    "query": query,
-                    "orientation": "portrait",   # vertical = 9:16 for Reels
-                    "size": "medium",
-                    "per_page": 10,
-                },
-            )
-            resp.raise_for_status()
-            videos = resp.json().get("videos", [])
+            for query in queries:
+                try:
+                    asset = await self._search_pexels(client, query)
+                    if asset:
+                        logger.info("Video asset fetched: %s (query='%s')", asset.url, query)
+                        return asset
+                except Exception as e:
+                    logger.warning("Pexels query '%s' failed: %s", query, e)
 
-        if not videos:
-            if required:
-                raise RuntimeError(f"No Pexels results for required query: '{query}'")
-            return None
+        raise RuntimeError(f"No portrait video found for topic='{topic}' after trying {len(queries)} queries")
 
-        # Pick a random video from results for variety
-        video = random.choice(videos[:5])
+    def _get_queries(self, topic: str, visual_query: str) -> list[str]:
+        """Build ordered list of queries to try."""
+        queries = []
 
-        # Prefer HD portrait file
-        files = video.get("video_files", [])
-        portrait_files = [
-            f for f in files
-            if f.get("width", 0) < f.get("height", 1)  # portrait check
-            and f.get("quality") in ("hd", "sd")
-        ]
-        chosen = portrait_files[0] if portrait_files else files[0]
+        # 1. Curated map — most precise
+        topic_lower = topic.lower()
+        for key, q_list in TOPIC_QUERY_MAP.items():
+            if key in topic_lower:
+                queries.extend(q_list)
+                break
 
-        return VideoAsset(
-            url=chosen["link"],
-            width=chosen.get("width", 1080),
-            height=chosen.get("height", 1920),
-            duration=video.get("duration", 60),
-            pexels_id=video["id"],
+        # 2. LLM-generated query
+        if visual_query and visual_query not in queries:
+            queries.append(visual_query)
+
+        # 3. Fallback — always works
+        queries.extend(FALLBACK_QUERIES)
+
+        return queries
+
+    async def _search_pexels(self, client: httpx.AsyncClient, query: str) -> VideoAsset | None:
+        resp = await client.get(
+            "https://api.pexels.com/videos/search",
+            headers={"Authorization": self.settings.pexels_api_key},
+            params={
+                "query": query,
+                "orientation": "portrait",
+                "size": "medium",
+                "per_page": 10,
+            },
         )
+        resp.raise_for_status()
+        videos = resp.json().get("videos", [])
+
+        # Filter: prefer HD portrait videos with good duration
+        for video in videos:
+            for vf in video.get("video_files", []):
+                w, h = vf.get("width", 0), vf.get("height", 0)
+                dur = video.get("duration", 0)
+                # Portrait + at least 8 seconds + reasonable resolution
+                if h > w and dur >= 8 and w >= 360:
+                    return VideoAsset(
+                        url=vf["link"],
+                        width=w,
+                        height=h,
+                        duration=dur,
+                    )
+        return None

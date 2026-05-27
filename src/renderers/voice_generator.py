@@ -1,76 +1,101 @@
 """
-Voice Generator
-Converts script text to MP3 using ElevenLabs multilingual v2.
-Saves audio to a temp file and returns the path.
+Voice Generator — ElevenLabs TTS
+Mood-based voice selection for gym/fitness Hinglish content.
 """
 
 import logging
 import uuid
 from pathlib import Path
+from typing import Literal
 
 import httpx
-from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
+OUTPUT_DIR = Path("tmp/audio")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── Voice pool — gym/fitness channel ──────────────────────────────────────────
+# czQ9pLzjRaF61EAYjcPC — Ranbir  (deep, authoritative)
+# IMzcdjL6UK1gZxag6QAU — Viraj   (energetic, youthful)
+# ypnkIsDASPgHZuanrF0q — Parveen (calm, informative)
+# SGbOfpm28edC83pZ9iGb — 4th voice (hype/intense)
+
+VOICES = {
+    "energetic": "IMzcdjL6UK1gZxag6QAU",   # Viraj — youthful energy, myth busting
+    "deep":      "czQ9pLzjRaF61EAYjcPC",   # Ranbir — authoritative, facts
+    "calm":      "ypnkIsDASPgHZuanrF0q",   # Parveen — science explanation
+    "hype":      "SGbOfpm28edC83pZ9iGb",   # 4th — intense, workout content
+}
+
+# Topic keyword → mood mapping
+TOPIC_MOOD_MAP = {
+    "myth":        "energetic",
+    "myth bust":   "energetic",
+    "fact":        "deep",
+    "science":     "calm",
+    "workout":     "hype",
+    "exercise":    "hype",
+    "gym":         "hype",
+    "training":    "hype",
+    "sleep":       "calm",
+    "diet":        "calm",
+    "nutrition":   "calm",
+    "vitamin":     "deep",
+    "protein":     "energetic",
+    "fat":         "deep",
+    "weight":      "energetic",
+    "cardio":      "hype",
+    "running":     "hype",
+    "walking":     "calm",
+    "stress":      "calm",
+    "gut":         "calm",
+    "sugar":       "energetic",
+    "bmi":         "deep",
+}
+
+def _pick_voice(topic: str) -> tuple[str, str]:
+    """Returns (voice_id, mood) based on topic keywords."""
+    topic_lower = topic.lower()
+    for keyword, mood in TOPIC_MOOD_MAP.items():
+        if keyword in topic_lower:
+            return VOICES[mood], mood
+    # Default — deep/authoritative for unknown topics
+    return VOICES["deep"], "deep"
+
 
 class VoiceGenerator:
-    BASE_URL = "https://api.elevenlabs.io/v1"
-
     def __init__(self, settings):
         self.settings = settings
-        self.out_dir = settings.audio_tmp_dir
 
-    async def generate(self, text: str, voice_id: str) -> Path:
-        """
-        Generate voiceover MP3 for given text.
+    async def generate(self, text: str, topic: str = "") -> Path:
+        """Generate voiceover. Picks voice based on topic mood."""
+        voice_id, mood = _pick_voice(topic)
+        logger.info("Voice selected: %s (mood=%s) for topic='%s'", voice_id, mood, topic)
 
-        Args:
-            text:     The full narration script (~150 words)
-            voice_id: ElevenLabs voice ID
+        audio_path = OUTPUT_DIR / f"voice_{uuid.uuid4().hex[:8]}.mp3"
 
-        Returns:
-            Path to the saved MP3 file
-        """
-        audio_bytes = await self._call_elevenlabs(text=text, voice_id=voice_id)
-        out_path = self.out_dir / f"voice_{uuid.uuid4().hex[:8]}.mp3"
-        out_path.write_bytes(audio_bytes)
-        logger.info("Audio saved: %s (%d KB)", out_path, len(audio_bytes) // 1024)
-        return out_path
-
-    @retry(
-        retry=retry_if_exception_type(httpx.HTTPError),
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=3, max=15),
-    )
-    async def _call_elevenlabs(self, text: str, voice_id: str) -> bytes:
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
-                f"{self.BASE_URL}/text-to-speech/{voice_id}",
+                f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
                 headers={
                     "xi-api-key": self.settings.elevenlabs_api_key,
                     "Content-Type": "application/json",
                 },
                 json={
                     "text": text,
-                    "model_id": self.settings.elevenlabs_model_id,
+                    "model_id": "eleven_multilingual_v2",
                     "voice_settings": {
-                        "stability": 0.5,
-                        "similarity_boost": 0.75,
-                        "style": 0.3,           # adds a bit of expressiveness
+                        "stability": 0.4,
+                        "similarity_boost": 0.8,
+                        "style": 0.3,
                         "use_speaker_boost": True,
                     },
                 },
             )
             resp.raise_for_status()
-            return resp.content
 
-    async def list_voices(self) -> list[dict]:
-        """Helper to browse available voices during setup."""
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{self.BASE_URL}/voices",
-                headers={"xi-api-key": self.settings.elevenlabs_api_key},
-            )
-            resp.raise_for_status()
-            return resp.json()["voices"]
+        audio_path.write_bytes(resp.content)
+        size_kb = audio_path.stat().st_size // 1024
+        logger.info("Audio saved: %s (%d KB) | voice=%s mood=%s", audio_path, size_kb, voice_id, mood)
+        return audio_path

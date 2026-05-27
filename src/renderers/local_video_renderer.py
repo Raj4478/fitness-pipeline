@@ -1,7 +1,6 @@
 """
-Local Video Renderer — 100% ffmpeg, no Python image libs.
-Styled captions with semi-transparent background box.
-No segfaults. No ImageMagick.
+Local Video Renderer — ffmpeg, styled captions, background music, outro card.
+No segfaults. No ImageMagick. No PIL.
 """
 
 import logging, math, textwrap, uuid, subprocess, shutil
@@ -13,12 +12,25 @@ import requests
 logger = logging.getLogger(__name__)
 OUTPUT_DIR = Path("tmp/videos")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+MUSIC_DIR = Path("music")
 TARGET_W, TARGET_H, FPS = 1080, 1920, 30
 CAPTION_FONT_SIZE = 58
 HOOK_FONT_SIZE = 68
 CAPTION_Y_POSITION = 0.72
 HOOK_Y_POSITION = 0.10
-WORDS_PER_CAPTION = 5      # fewer words = bigger text = more readable
+WORDS_PER_CAPTION = 5
+BG_MUSIC_VOLUME = 0.08
+OUTRO_DURATION = 3.0
+
+# Topic → music mood map
+TOPIC_MUSIC_MAP = {
+    "workout": "hype", "gym": "hype", "training": "hype",
+    "cardio": "hype", "running": "hype", "exercise": "hype",
+    "sleep": "calm", "stress": "calm", "yoga": "calm",
+    "walking": "calm", "gut": "calm", "diet": "calm",
+    "protein": "motivational", "myth": "motivational",
+    "fat": "motivational", "weight": "motivational",
+}
 
 @dataclass
 class RenderResult:
@@ -35,7 +47,7 @@ def _get_ffmpeg():
         import imageio_ffmpeg
         return imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:
-        raise RuntimeError("ffmpeg not found. Run: pip install imageio-ffmpeg")
+        raise RuntimeError("ffmpeg not found.")
 
 class LocalVideoRenderer:
     def __init__(self, settings):
@@ -43,7 +55,8 @@ class LocalVideoRenderer:
         self._ffmpeg = _get_ffmpeg()
         logger.info("Using ffmpeg: %s", self._ffmpeg)
 
-    async def render(self, template_id, hook_text, body_text, video_url, audio_url, bg_music_path=None):
+    async def render(self, template_id, hook_text, body_text, video_url, audio_url,
+                     bg_music_path=None, topic=""):
         rid = uuid.uuid4().hex[:10]
         logger.info("LocalRenderer [%s] starting render", rid)
 
@@ -56,16 +69,22 @@ class LocalVideoRenderer:
         self._crop(footage, cropped)
         logger.info("[%s] Cropped to vertical", rid)
 
+        total_dur = dur + OUTRO_DURATION
         looped = OUTPUT_DIR / f"loop_{rid}.mp4"
-        self._loop(cropped, looped, dur)
-        logger.info("[%s] Looped footage", rid)
+        self._loop(cropped, looped, total_dur)
+        logger.info("[%s] Looped footage %.1fs", rid, total_dur)
+
+        # Find background music
+        music_path = bg_music_path or self._find_music(topic)
 
         out = OUTPUT_DIR / f"video_{rid}.mp4"
-        self._burn_styled_captions(looped, audio, hook_text, body_text, dur, out)
+        self._burn_all(looped, audio, hook_text, body_text, dur, total_dur, music_path, out)
         logger.info("[%s] Render complete: %s", rid, out)
 
         self._cleanup([footage, cropped, looped])
-        return RenderResult(rid, str(out), TARGET_W, TARGET_H, dur)
+        return RenderResult(rid, str(out), TARGET_W, TARGET_H, total_dur)
+
+    # ── ffmpeg core ops ────────────────────────────────────────────────
 
     def _crop(self, src, dst):
         vf = (f"crop='if(gt(iw/ih,9/16),ih*9/16,iw)':'if(gt(iw/ih,9/16),ih,iw*16/9)',"
@@ -77,16 +96,18 @@ class LocalVideoRenderer:
         loops = max(1, math.ceil(dur / cd))
         self._ff(["-y","-stream_loop",str(loops),"-i",str(src),"-t",str(dur),"-c","copy",str(dst)])
 
-    def _burn_styled_captions(self, video, audio, hook_text, body_text, dur, out):
+    def _burn_all(self, video, audio, hook_text, body_text, voice_dur, total_dur, music_path, out):
         """
-        Styled captions using ffmpeg drawbox + drawtext combo.
-        Semi-transparent black box behind white text — Instagram style.
+        Single ffmpeg pass:
+        - Styled captions with background box
+        - Outro card (last 3 seconds)
+        - Background music mixed with voiceover
         """
         font = self._find_font()
         filters = []
 
-        # ── Hook — yellow bold text, top of screen ─────────────────────
-        hook_duration = min(4.0, dur * 0.15)
+        # ── Captions ───────────────────────────────────────────────────
+        hook_dur = min(4.0, voice_dur * 0.15)
         hook_clean = self._clean(hook_text)
         hook_lines = textwrap.wrap(hook_text, width=22) or [hook_text]
         hook_line_h = HOOK_FONT_SIZE + 10
@@ -94,88 +115,134 @@ class LocalVideoRenderer:
         hook_box_y = int(TARGET_H * HOOK_Y_POSITION)
         hook_text_y = hook_box_y + 15
 
-        # Background box for hook
         filters.append(
-            f"drawbox="
-            f"x=40:y={hook_box_y}:"
-            f"w={TARGET_W - 80}:h={hook_box_h}:"
-            f"color=black@0.55:t=fill:"
-            f"enable='between(t,0,{hook_duration:.2f})'"
+            f"drawbox=x=40:y={hook_box_y}:w={TARGET_W-80}:h={hook_box_h}"
+            f":color=black@0.6:t=fill:enable='between(t,0,{hook_dur:.2f})'"
         )
-        # Hook text (yellow, bold border)
         for i, line in enumerate(hook_lines):
-            line_clean = self._clean(line)
             y = hook_text_y + i * hook_line_h
             filters.append(
-                f"drawtext=fontfile='{font}'"
-                f":text='{line_clean}'"
-                f":fontsize={HOOK_FONT_SIZE}"
-                f":fontcolor=#FFE234"
+                f"drawtext=fontfile='{font}':text='{self._clean(line)}'"
+                f":fontsize={HOOK_FONT_SIZE}:fontcolor=#FFE234"
                 f":borderw=2:bordercolor=black@0.8"
                 f":x=(w-text_w)/2:y={y}"
-                f":enable='between(t,0,{hook_duration:.2f})'"
+                f":enable='between(t,0,{hook_dur:.2f})'"
             )
 
-        # ── Body captions — white text, bottom third ───────────────────
         words = body_text.split()
         if words:
             chunks = [" ".join(words[i:i+WORDS_PER_CAPTION])
                       for i in range(0, len(words), WORDS_PER_CAPTION)]
-            chunk_dur = (dur - hook_duration) / len(chunks)
-            cap_y_base = int(TARGET_H * CAPTION_Y_POSITION)
+            chunk_dur = (voice_dur - hook_dur) / len(chunks)
+            cap_y = int(TARGET_H * CAPTION_Y_POSITION)
             cap_line_h = CAPTION_FONT_SIZE + 12
-            cap_padding = 20
 
             for i, chunk in enumerate(chunks):
-                t_start = hook_duration + i * chunk_dur
-                t_end = t_start + chunk_dur
-                enable = f"between(t,{t_start:.3f},{t_end:.3f})"
-
+                ts = hook_dur + i * chunk_dur
+                te = ts + chunk_dur
+                enable = f"between(t,{ts:.3f},{te:.3f})"
                 lines = textwrap.wrap(chunk, width=24) or [chunk]
-                box_h = len(lines) * cap_line_h + cap_padding * 2
-                box_y = cap_y_base - cap_padding
+                box_h = len(lines) * cap_line_h + 40
+                box_y = cap_y - 20
 
-                # Semi-transparent background box
                 filters.append(
-                    f"drawbox="
-                    f"x=30:y={box_y}:"
-                    f"w={TARGET_W - 60}:h={box_h}:"
-                    f"color=black@0.6:t=fill:"
-                    f"enable='{enable}'"
+                    f"drawbox=x=30:y={box_y}:w={TARGET_W-60}:h={box_h}"
+                    f":color=black@0.6:t=fill:enable='{enable}'"
                 )
-
-                # Caption text lines
                 for j, line in enumerate(lines):
-                    line_clean = self._clean(line)
-                    y = cap_y_base + j * cap_line_h
+                    y = cap_y + j * cap_line_h
                     filters.append(
-                        f"drawtext=fontfile='{font}'"
-                        f":text='{line_clean}'"
-                        f":fontsize={CAPTION_FONT_SIZE}"
-                        f":fontcolor=white"
+                        f"drawtext=fontfile='{font}':text='{self._clean(line)}'"
+                        f":fontsize={CAPTION_FONT_SIZE}:fontcolor=white"
                         f":borderw=2:bordercolor=black@0.9"
                         f":x=(w-text_w)/2:y={y}"
                         f":enable='{enable}'"
                     )
 
-        self._ff([
-            "-y",
-            "-i", str(video),
-            "-i", str(audio),
-            "-vf", ",".join(filters),
-            "-map", "0:v",
-            "-map", "1:a",
-            "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-            "-c:a", "aac", "-b:a", "192k",
-            "-t", str(dur),
-            str(out)
-        ])
+        # ── Outro card (last OUTRO_DURATION seconds) ───────────────────
+        outro_start = voice_dur
+        outro_enable = f"between(t,{outro_start:.2f},{total_dur:.2f})"
+
+        # Full black overlay for outro
+        filters.append(
+            f"drawbox=x=0:y=0:w={TARGET_W}:h={TARGET_H}"
+            f":color=black@0.85:t=fill:enable='{outro_enable}'"
+        )
+        # Channel branding lines
+        outro_texts = [
+            ("DAILY FITNESS FACTS", TARGET_H // 2 - 120, "#FFE234", 62),
+            ("Follow for more", TARGET_H // 2 - 30, "white", 48),
+            ("Save this video", TARGET_H // 2 + 50, "white", 40),
+        ]
+        for text, y, color, size in outro_texts:
+            filters.append(
+                f"drawtext=fontfile='{font}':text='{text}'"
+                f":fontsize={size}:fontcolor={color}"
+                f":borderw=2:bordercolor=black"
+                f":x=(w-text_w)/2:y={y}"
+                f":enable='{outro_enable}'"
+            )
+
+        vf = ",".join(filters)
+
+        # ── Build ffmpeg command with optional music ───────────────────
+        if music_path and Path(music_path).exists():
+            logger.info("Mixing background music: %s", music_path)
+            cmd = [
+                "-y",
+                "-i", str(video),
+                "-i", str(audio),
+                "-i", str(music_path),
+                "-filter_complex",
+                f"[1:a]apad=whole_dur={total_dur}[voice];"
+                f"[2:a]aloop=loop=-1:size=2e+09,atrim=duration={total_dur},"
+                f"volume={BG_MUSIC_VOLUME}[music];"
+                f"[voice][music]amix=inputs=2:duration=first[aout]",
+                "-vf", vf,
+                "-map", "0:v",
+                "-map", "[aout]",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "-c:a", "aac", "-b:a", "192k",
+                "-t", str(total_dur),
+                str(out)
+            ]
+        else:
+            cmd = [
+                "-y",
+                "-i", str(video),
+                "-i", str(audio),
+                "-vf", vf,
+                "-map", "0:v", "-map", "1:a",
+                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                "-c:a", "aac", "-b:a", "192k",
+                "-t", str(total_dur),
+                str(out)
+            ]
+        self._ff(cmd)
+
+    def _find_music(self, topic: str) -> Optional[str]:
+        """Find matching music file from music/ folder."""
+        if not MUSIC_DIR.exists():
+            return None
+        topic_lower = topic.lower()
+        mood = "motivational"
+        for keyword, m in TOPIC_MUSIC_MAP.items():
+            if keyword in topic_lower:
+                mood = m
+                break
+        # Try mood-specific first, then any mp3
+        for pattern in [f"{mood}*.mp3", "*.mp3"]:
+            matches = list(MUSIC_DIR.glob(pattern))
+            if matches:
+                logger.info("Background music: %s (mood=%s)", matches[0].name, mood)
+                return str(matches[0])
+        return None
 
     def _find_font(self):
         for f in [
-            "C:/Windows/Fonts/arialbd.ttf",     # Arial Bold
+            "C:/Windows/Fonts/arialbd.ttf",
             "C:/Windows/Fonts/arial.ttf",
-            "C:/Windows/Fonts/calibrib.ttf",    # Calibri Bold
+            "C:/Windows/Fonts/calibrib.ttf",
             "C:/Windows/Fonts/calibri.ttf",
             "C:/Windows/Fonts/verdana.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -185,7 +252,7 @@ class LocalVideoRenderer:
         raise RuntimeError("No font found.")
 
     def _clean(self, text):
-        for ch in ["'", ":", "\\", "[", "]", "=", ",", "%", "\"", "{"  , "}"]:
+        for ch in ["'", ":", "\\", "[", "]", "=", ",", "%", '"', "{", "}"]:
             text = text.replace(ch, " ")
         return text.strip()
 

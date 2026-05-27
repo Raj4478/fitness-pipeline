@@ -65,7 +65,7 @@ async def run_pipeline(
         voice_gen = VoiceGenerator(settings)
         audio_path = await voice_gen.generate(
             text=script.full_narration,
-            voice_id=settings.elevenlabs_voice_id,
+            topic=selected_topic,
         )
         logger.info("Voiceover generated: %s", audio_path)
 
@@ -77,6 +77,7 @@ async def run_pipeline(
             body_text=script.body,
             video_url=video_asset.url,
             audio_url=str(audio_path),
+            topic=selected_topic,
         )
         audio_url = str(audio_path)
         logger.info("Video rendered: %s", render_result.video_url)
