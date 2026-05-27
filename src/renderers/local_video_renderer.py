@@ -55,7 +55,7 @@ class LocalVideoRenderer:
         logger.info("Using ffmpeg: %s", self._ffmpeg)
 
     async def render(self, template_id, hook_text, body_text, video_url, audio_url,
-                     bg_music_path=None, topic=""):
+                     bg_music_path=None, topic="", subject=""):
         rid = uuid.uuid4().hex[:10]
         logger.info("LocalRenderer [%s] starting render", rid)
 
@@ -76,7 +76,11 @@ class LocalVideoRenderer:
         # Find background music
         music_path = bg_music_path or self._find_music(topic)
 
-        out = OUTPUT_DIR / f"video_{rid}.mp4"
+        # Use topic as filename — sanitize for filesystem
+        import re as _re
+        safe_topic = _re.sub(r"[^a-zA-Z0-9]+", "_", (subject or topic).strip().lower())[:40]
+        safe_topic = safe_topic.strip("_") or "video"
+        out = OUTPUT_DIR / f"{safe_topic}_{rid[:6]}.mp4"
         self._burn_all(looped, audio, hook_text, body_text, dur, total_dur, music_path, out)
         logger.info("[%s] Render complete: %s", rid, out)
 

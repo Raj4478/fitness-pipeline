@@ -81,6 +81,7 @@ async def run_pipeline(
             video_url=video_asset.url,
             audio_url=str(audio_path),
             topic=selected_topic,
+            subject=selected_topic,
         )
         audio_url = str(audio_path)
         logger.info("Video rendered: %s", render_result.video_url)
