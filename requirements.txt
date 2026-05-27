@@ -22,3 +22,6 @@ cloudinary==1.40.0
 
 # ── Publishing ─────────────────────────────────────────────────
 # Buffer API via httpx — no extra package needed
+
+# Telegram Bot
+python-telegram-bot==21.6
