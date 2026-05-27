@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 async def run_pipeline(
-    niche: str = "finance",
+    niche: str = "fitness",
     topic: Optional[str] = None,
     dry_run: bool = False,
 ) -> dict:
@@ -32,7 +32,7 @@ async def run_pipeline(
     End-to-end pipeline: script → voice → video → publish.
 
     Args:
-        niche:   "finance" or "story"
+        niche:   "fitness" or "story"
         topic:   Optional override. If None, auto-picks from TopicBank.
         dry_run: Generate + render but skip publishing. For testing.
 
@@ -122,7 +122,7 @@ async def run_pipeline(
 def main() -> None:
     import argparse
     parser = argparse.ArgumentParser(description="Content automation pipeline")
-    parser.add_argument("--niche", choices=["finance", "story"], default="finance")
+    parser.add_argument("--niche", choices=["fitness", "story"], default="fitness")
     parser.add_argument("--topic", type=str, default=None)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--log-level", default="INFO")

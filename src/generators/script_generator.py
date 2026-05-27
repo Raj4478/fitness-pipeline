@@ -1,10 +1,8 @@
 """
-Script Generator
-Supports three LLM providers: Gemini (primary/free), Groq (cheap), DeepSeek (paid).
-Tries providers in order — first one that works wins.
-
-Finance scripts now lead with REAL facts/news, not ad-style invest karo content.
-News is fetched from Google News RSS (free, no API key needed).
+Script Generator — Fitness Niche
+Supports three LLM providers: Gemini (primary), Groq (fallback), DeepSeek.
+Fetches real fitness/health news from Google News RSS before generating.
+Scripts are fact-based, myth-busting — not gym ads.
 """
 
 import json
@@ -24,59 +22,45 @@ from tenacity import (
 
 logger = logging.getLogger(__name__)
 
-FINANCE_SYSTEM_PROMPT = """
-You are a viral Hinglish finance educator for Indian Gen Z (18-28 yrs) on Instagram Reels.
-Your job is to TEACH — not sell. Share facts that shock, surprise, or educate.
+FITNESS_SYSTEM_PROMPT = """
+You are a viral Hinglish fitness educator for Indian Gen Z (18-28 yrs) on Instagram Reels.
+Your job is to TEACH fitness science — not sell gym memberships or supplements.
 
 STRICT RULES:
-- NEVER say "invest karo", "SIP karo", "financial advisor se poocho" — ye ad nahi hai
-- ALWAYS lead with a shocking fact, stat, or news — something people don't know
-- Use relatable comparisons: chai (₹30), movie ticket (₹300), iPhone (₹80k), salary (₹30k/month)
-- Explain WHY the fact matters — connect to their daily life
-- End with a mind-blowing implication or question that makes them share
-- Hook must make someone stop scrolling in 2 seconds
-- Language: Natural Hinglish — "Yaar", "soch", "matlab", "dekho", "actually"
+- NEVER say "gym join karo", "protein lo", "trainer se poocho" — ye ad nahi hai
+- ALWAYS lead with a shocking fitness fact, myth bust, or real health news
+- Use relatable comparisons: chai, roti, office chair, 9-to-5 job, Netflix binge
+- Explain the science simply — WHY does this happen in the body
+- End with something that makes them go "yaar ye toh pata hi nahi tha" — shareable
+- Hook must stop someone mid-scroll in 2 seconds
+- Language: Natural Hinglish — "Yaar", "soch", "matlab", "dekho", "actually", "sunlo"
 - Total narration: 120-150 words
 
-GOOD EXAMPLES of hooks:
-- "India mein 97% log retirement ke liye kuch nahi bachate — aur wo 60 pe broke ho jaate hain"
-- "Ek McDonald's burger ki price har saal 7% badhti hai — teri salary kitni badhti hai?"
-- "RBI ne aaj interest rate ghata diya — iska matlab tera home loan sasta hoga"
-- "Mukesh Ambani ek second mein ₹90,000 kamaata hai — teri poori month ki salary"
+GOOD hook examples:
+- "Roz gym jaate ho? Ye ek galti sab karte hain jo results rok deti hai"
+- "8 ghante sone ke baad bhi thaka feel hota hai? Ye reason hai"
+- "Walking vs Running — calorie burn mein fark sirf 20% hai, science bolta hai"
+- "India mein 70% log Vitamin D deficient hain — aur unhe pata bhi nahi"
+- "Sugar-free drinks peete ho? Study ne kaha ye zyada dangerous hai"
 
 BAD examples (never do this):
-- "SIP mein invest karo aur 1 crore banao"
-- "Mutual funds sahi hai"
-- Generic "paise bachao" advice
+- "Gym join karo fit rehne ke liye"
+- "Protein shake piyo muscles ke liye"  
+- Generic "exercise karo healthy raho" advice
 
-If a finance news headline is provided, base the script on that real news.
-Otherwise use a shocking finance fact relevant to the topic.
-
-Respond ONLY with valid JSON. No markdown, no explanation.
-""".strip()
-
-STORY_SYSTEM_PROMPT = """
-You are a dramatic storyteller for Indian short-form video (Reels/Shorts).
-Write gripping betrayal/revenge/twist stories for Indian audiences.
-
-Rules:
-- Hook: Set the scene instantly — "Mera best friend ne mujhe dhoka diya..."
-- Build tension fast — no slow intros
-- Twist or revenge ending in last 15 seconds
-- Relatable Indian setting (office, family, college, arranged marriage)
-- Narration: 140-170 words for 60-second video
-- Language: Mostly Hindi, some English words naturally
+If a fitness/health news headline is provided, base the script on that real news.
+Otherwise use a shocking fitness fact or myth bust relevant to the topic.
 
 Respond ONLY with valid JSON. No markdown, no explanation.
 """.strip()
 
 RESPONSE_SCHEMA = """
 {
-  "hook": "shocking opening line (max 12 words, must be a fact or news — not advice)",
-  "body": "main narration — explain the fact, why it matters, real numbers (3-4 sentences)",
+  "hook": "shocking opening line (max 12 words, must be a fact/myth bust — not advice)",
+  "body": "main narration — explain the fact/science, why it matters, real numbers (3-4 sentences)",
   "full_narration": "complete script hook + body as one paragraph",
   "caption": "Instagram caption with 3 relevant hashtags",
-  "visual_query": "3-word English stock video search term"
+  "visual_query": "3-word English stock video search term for fitness B-roll"
 }
 """.strip()
 
@@ -94,21 +78,18 @@ class Script:
     topic: str
 
     def build_caption(self, niche: str) -> str:
-        common_tags = "#india #reels #viral"
-        niche_tags = (
-            "#finance #investing #paisa #moneyminds"
-            if niche == "finance"
-            else "#story #drama #twist #hindustanistories"
+        return (
+            f"{self.caption}\n\n"
+            f"#fitness #health #fitnessfacts #indianfitness #gym #reels #viral #india"
         )
-        return f"{self.caption}\n\n{niche_tags} {common_tags}"
 
 
-async def fetch_finance_news(topic: str) -> str:
+async def fetch_fitness_news(topic: str) -> str:
     """
-    Fetch latest Indian finance news from Google News RSS.
-    Free, no API key needed. Returns top headline or empty string.
+    Fetch latest fitness/health news from Google News RSS.
+    Free, no API key needed.
     """
-    query = topic.replace(" ", "+") + "+india+finance"
+    query = topic.replace(" ", "+") + "+health+fitness+india"
     url = f"https://news.google.com/rss/search?q={query}&hl=en-IN&gl=IN&ceid=IN:en"
     try:
         async with httpx.AsyncClient(timeout=8) as client:
@@ -118,9 +99,8 @@ async def fetch_finance_news(topic: str) -> str:
             items = root.findall(".//item")
             if items:
                 title = items[0].findtext("title") or ""
-                # Clean Google News title format "Headline - Source"
                 title = re.sub(r"\s*-\s*[^-]+$", "", title).strip()
-                logger.info("Finance news fetched: %s", title[:80])
+                logger.info("Fitness news fetched: %s", title[:80])
                 return title
     except Exception as e:
         logger.warning("News fetch failed (non-critical): %s", e)
@@ -131,15 +111,8 @@ class ScriptGenerator:
     def __init__(self, settings):
         self.settings = settings
 
-    async def generate(self, niche: Literal["finance", "story"], topic: str) -> Script:
-        """
-        Generate script trying each configured LLM provider in order.
-        For finance niche — fetches real news first to ground the script in facts.
-        """
-        # Fetch real news for finance niche
-        news_context = ""
-        if niche == "finance":
-            news_context = await fetch_finance_news(topic)
+    async def generate(self, niche: Literal["fitness"], topic: str) -> Script:
+        news_context = await fetch_fitness_news(topic)
 
         providers = self.settings.active_providers()
         caller_map = {
@@ -162,40 +135,31 @@ class ScriptGenerator:
             except httpx.HTTPStatusError as exc:
                 code = exc.response.status_code
                 if code in FATAL_STATUS_CODES:
-                    logger.warning(
-                        "%s: HTTP %d (billing/auth issue) — skipping", provider_name, code
-                    )
+                    logger.warning("%s: HTTP %d — skipping", provider_name, code)
                 else:
-                    logger.warning("%s: HTTP %d — trying next provider", provider_name, code)
+                    logger.warning("%s: HTTP %d — trying next", provider_name, code)
                 last_error = exc
             except Exception as exc:
-                logger.warning("%s failed: %s — trying next provider", provider_name, exc)
+                logger.warning("%s failed: %s — trying next", provider_name, exc)
                 last_error = exc
 
         raise RuntimeError(
-            f"All LLM providers failed ({providers}). Last error: {last_error}\n"
-            f"Check: (1) API keys in .env, (2) model IDs are valid, (3) account has quota."
+            f"All LLM providers failed ({providers}). Last error: {last_error}"
         )
 
     def _build_user_prompt(self, niche: str, topic: str, news_context: str = "") -> str:
-        if niche == "finance":
-            news_line = (
-                f"\n\nTODAY'S NEWS TO BASE SCRIPT ON: \"{news_context}\"\n"
-                f"Use this real news as the hook/fact. Explain what it means for common Indians."
-                if news_context
-                else "\n\nNo news available — use a shocking finance fact about this topic instead."
-            )
-            return (
-                f"Write a viral Hinglish finance EDUCATION Reel about: '{topic}'."
-                f"{news_line}\n\n"
-                f"Remember: Teach a fact. Don't give advice. Shock them first.\n"
-                f"Response schema:\n{RESPONSE_SCHEMA}"
-            )
-        else:
-            return (
-                f"Write a viral Hinglish story Reel about: '{topic}'.\n"
-                f"Response schema:\n{RESPONSE_SCHEMA}"
-            )
+        news_line = (
+            f"\n\nTODAY'S HEALTH NEWS: \"{news_context}\"\n"
+            f"Base the script on this real news. Explain what it means for everyday Indians."
+            if news_context
+            else "\n\nNo news available — use a shocking fitness fact or myth bust about this topic."
+        )
+        return (
+            f"Write a viral Hinglish fitness EDUCATION Reel about: '{topic}'."
+            f"{news_line}\n\n"
+            f"Remember: Teach a fact. Bust a myth. Shock them first. No ads.\n"
+            f"Response schema:\n{RESPONSE_SCHEMA}"
+        )
 
     @retry(
         retry=retry_if_exception_type(httpx.TimeoutException),
@@ -203,8 +167,7 @@ class ScriptGenerator:
         wait=wait_exponential(multiplier=1, min=2, max=10),
     )
     async def _call_gemini(self, niche: str, topic: str, news_context: str = "") -> dict:
-        system = FINANCE_SYSTEM_PROMPT if niche == "finance" else STORY_SYSTEM_PROMPT
-        prompt = f"{system}\n\n{self._build_user_prompt(niche, topic, news_context)}"
+        prompt = f"{FITNESS_SYSTEM_PROMPT}\n\n{self._build_user_prompt(niche, topic, news_context)}"
         async with httpx.AsyncClient(timeout=self.settings.llm_timeout_seconds) as client:
             resp = await client.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -219,11 +182,7 @@ class ScriptGenerator:
                     },
                 },
             )
-            try:
-                resp.raise_for_status()
-            except httpx.HTTPStatusError:
-                logger.error("Gemini HTTP %s | body=%s", resp.status_code, resp.text[:500])
-                raise
+            resp.raise_for_status()
             text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
             return json.loads(text)
 
@@ -233,7 +192,6 @@ class ScriptGenerator:
         wait=wait_exponential(multiplier=1, min=2, max=10),
     )
     async def _call_groq(self, niche: str, topic: str, news_context: str = "") -> dict:
-        system = FINANCE_SYSTEM_PROMPT if niche == "finance" else STORY_SYSTEM_PROMPT
         async with httpx.AsyncClient(timeout=self.settings.llm_timeout_seconds) as client:
             resp = await client.post(
                 f"{self.settings.groq_base_url}/chat/completions",
@@ -241,7 +199,7 @@ class ScriptGenerator:
                 json={
                     "model": self.settings.groq_model,
                     "messages": [
-                        {"role": "system", "content": system},
+                        {"role": "system", "content": FITNESS_SYSTEM_PROMPT},
                         {"role": "user", "content": self._build_user_prompt(niche, topic, news_context)},
                     ],
                     "temperature": 0.85,
@@ -249,13 +207,8 @@ class ScriptGenerator:
                     "response_format": {"type": "json_object"},
                 },
             )
-            try:
-                resp.raise_for_status()
-            except httpx.HTTPStatusError:
-                logger.error("Groq HTTP %s | body=%s", resp.status_code, resp.text[:500])
-                raise
-            content = resp.json()["choices"][0]["message"]["content"]
-            return json.loads(content)
+            resp.raise_for_status()
+            return json.loads(resp.json()["choices"][0]["message"]["content"])
 
     @retry(
         retry=retry_if_exception_type(httpx.TimeoutException),
@@ -263,7 +216,6 @@ class ScriptGenerator:
         wait=wait_exponential(multiplier=1, min=2, max=10),
     )
     async def _call_deepseek(self, niche: str, topic: str, news_context: str = "") -> dict:
-        system = FINANCE_SYSTEM_PROMPT if niche == "finance" else STORY_SYSTEM_PROMPT
         async with httpx.AsyncClient(timeout=self.settings.llm_timeout_seconds) as client:
             resp = await client.post(
                 f"{self.settings.deepseek_base_url}/chat/completions",
@@ -271,7 +223,7 @@ class ScriptGenerator:
                 json={
                     "model": self.settings.deepseek_model,
                     "messages": [
-                        {"role": "system", "content": system},
+                        {"role": "system", "content": FITNESS_SYSTEM_PROMPT},
                         {"role": "user", "content": self._build_user_prompt(niche, topic, news_context)},
                     ],
                     "temperature": 0.85,
@@ -279,19 +231,14 @@ class ScriptGenerator:
                     "response_format": {"type": "json_object"},
                 },
             )
-            try:
-                resp.raise_for_status()
-            except httpx.HTTPStatusError:
-                logger.error("DeepSeek HTTP %s | body=%s", resp.status_code, resp.text[:500])
-                raise
-            content = resp.json()["choices"][0]["message"]["content"]
-            return json.loads(content)
+            resp.raise_for_status()
+            return json.loads(resp.json()["choices"][0]["message"]["content"])
 
     def _parse(self, raw: dict, niche: str, topic: str) -> Script:
         required = ["hook", "body", "full_narration", "caption", "visual_query"]
         missing = [k for k in required if not raw.get(k)]
         if missing:
-            raise ValueError(f"LLM response missing fields: {missing}. Got: {list(raw.keys())}")
+            raise ValueError(f"LLM response missing fields: {missing}")
         return Script(
             hook=raw["hook"].strip(),
             body=raw["body"].strip(),
