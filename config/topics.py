@@ -57,3 +57,9 @@ class TopicBank:
         self._used.setdefault(niche, []).append(topic)
         USED_TOPICS_FILE.write_text(json.dumps(self._used, indent=2))
         return topic
+
+    def mark_used(self, niche: str, topic: str) -> None:
+        self._used.setdefault(niche, [])
+        if topic not in self._used[niche]:
+            self._used[niche].append(topic)
+        USED_TOPICS_FILE.write_text(json.dumps(self._used, indent=2))
