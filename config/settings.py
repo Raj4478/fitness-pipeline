@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     elevenlabs_api_key_2: str = Field(default="", description="ElevenLabs API key (fallback 2)")
     elevenlabs_api_key_3: str = Field(default="", description="ElevenLabs API key (fallback 3)")
     elevenlabs_voice_id: str = "pNInz6obpgDQGcFmaJgB"
-    elevenlabs_model_id: str = "eleven_multilingual_v2"
+    elevenlabs_model_id: str = "eleven_flash_v2_5"  # 2x free credits + better Hindi
 
     def elevenlabs_api_keys(self) -> list[str]:
         """Returns all configured ElevenLabs API keys in priority order."""
