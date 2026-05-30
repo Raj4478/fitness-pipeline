@@ -172,13 +172,12 @@ class LocalVideoRenderer:
         # Full black overlay for outro
         filters.append(
             f"drawbox=x=0:y=0:w={TARGET_W}:h={TARGET_H}"
-            f":color=black@0.85:t=fill:enable='{outro_enable}'"
+            f":color=black@0.88:t=fill:enable='{outro_enable}'"
         )
-        # Channel branding lines
+        # Text branding below logo
         outro_texts = [
-            ("DAILY FITNESS FACTS", TARGET_H // 2 - 120, "#FFE234", 62),
-            ("Follow for more", TARGET_H // 2 - 30, "white", 48),
-            ("Save this video", TARGET_H // 2 + 50, "white", 40),
+            ("Follow for more", TARGET_H // 2 + 280, "white", 48),
+            ("Save this video", TARGET_H // 2 + 360, "#FFE234", 40),
         ]
         for text, y, color, size in outro_texts:
             filters.append(
@@ -191,39 +190,94 @@ class LocalVideoRenderer:
 
         vf = ",".join(filters)
 
-        # ── Build ffmpeg command with optional music ───────────────────
+        # ── Check for logo ─────────────────────────────────────────────
+        logo_path = Path("assets/logo.png")
+        has_logo = logo_path.exists()
+        if has_logo:
+            logger.info("Logo found: %s", logo_path)
+
+        # ── Build ffmpeg command with optional music + logo ────────────
         if music_path and Path(music_path).exists():
             logger.info("Mixing background music: %s", music_path)
-            cmd = [
-                "-y",
-                "-i", str(video),
-                "-i", str(audio),
-                "-i", str(music_path),
-                "-filter_complex",
-                f"[1:a]apad=whole_dur={total_dur}[voice];"
-                f"[2:a]aloop=loop=-1:size=2e+09,atrim=duration={total_dur},"
-                f"volume={BG_MUSIC_VOLUME}[music];"
-                f"[voice][music]amix=inputs=2:duration=first[aout]",
-                "-vf", vf,
-                "-map", "0:v",
-                "-map", "[aout]",
-                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-                "-c:a", "aac", "-b:a", "192k",
-                "-t", str(total_dur),
-                str(out)
-            ]
+            if has_logo:
+                # video + audio + music + logo
+                logo_size = 500
+                logo_x = (TARGET_W - logo_size) // 2
+                logo_y = TARGET_H // 2 - 250
+                cmd = [
+                    "-y",
+                    "-i", str(video),
+                    "-i", str(audio),
+                    "-i", str(music_path),
+                    "-i", str(logo_path),
+                    "-filter_complex",
+                    f"[1:a]apad=whole_dur={total_dur}[voice];"
+                    f"[2:a]aloop=loop=-1:size=2e+09,atrim=duration={total_dur},"
+                    f"volume={BG_MUSIC_VOLUME}[music];"
+                    f"[voice][music]amix=inputs=2:duration=first[aout];"
+                    f"[0:v]{vf}[vtxt];"
+                    f"[3:v]scale={logo_size}:{logo_size}[logo];"
+                    f"[vtxt][logo]overlay={logo_x}:{logo_y}:enable='between(t,{outro_start:.2f},{total_dur:.2f})'[vout]",
+                    "-map", "[vout]",
+                    "-map", "[aout]",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-t", str(total_dur),
+                    str(out)
+                ]
+            else:
+                cmd = [
+                    "-y",
+                    "-i", str(video),
+                    "-i", str(audio),
+                    "-i", str(music_path),
+                    "-filter_complex",
+                    f"[1:a]apad=whole_dur={total_dur}[voice];"
+                    f"[2:a]aloop=loop=-1:size=2e+09,atrim=duration={total_dur},"
+                    f"volume={BG_MUSIC_VOLUME}[music];"
+                    f"[voice][music]amix=inputs=2:duration=first[aout]",
+                    "-vf", vf,
+                    "-map", "0:v",
+                    "-map", "[aout]",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-t", str(total_dur),
+                    str(out)
+                ]
         else:
-            cmd = [
-                "-y",
-                "-i", str(video),
-                "-i", str(audio),
-                "-vf", vf,
-                "-map", "0:v", "-map", "1:a",
-                "-c:v", "libx264", "-preset", "fast", "-crf", "20",
-                "-c:a", "aac", "-b:a", "192k",
-                "-t", str(total_dur),
-                str(out)
-            ]
+            if has_logo:
+                # video + audio + logo only
+                logo_size = 500
+                logo_x = (TARGET_W - logo_size) // 2
+                logo_y = TARGET_H // 2 - 250
+                cmd = [
+                    "-y",
+                    "-i", str(video),
+                    "-i", str(audio),
+                    "-i", str(logo_path),
+                    "-filter_complex",
+                    f"[0:v]{vf}[vtxt];"
+                    f"[2:v]scale={logo_size}:{logo_size}[logo];"
+                    f"[vtxt][logo]overlay={logo_x}:{logo_y}:enable='between(t,{outro_start:.2f},{total_dur:.2f})'[vout]",
+                    "-map", "[vout]",
+                    "-map", "1:a",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-t", str(total_dur),
+                    str(out)
+                ]
+            else:
+                cmd = [
+                    "-y",
+                    "-i", str(video),
+                    "-i", str(audio),
+                    "-vf", vf,
+                    "-map", "0:v", "-map", "1:a",
+                    "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-c:a", "aac", "-b:a", "192k",
+                    "-t", str(total_dur),
+                    str(out)
+                ]
         self._ff(cmd)
 
     def _find_music(self, topic: str) -> Optional[str]:
