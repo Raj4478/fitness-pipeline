@@ -80,6 +80,20 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
         run: python scripts/repurpose_for_shorts.py
 
+      - name: Install YouTube API dependencies
+        if: success()
+        run: pip install google-auth-oauthlib google-api-python-client
+
+      - name: Upload to YouTube Shorts
+        if: success()
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
+        run: python scripts/upload_to_youtube.py
+
       - name: Upload videos as artifact
         if: always()
         uses: actions/upload-artifact@v4
