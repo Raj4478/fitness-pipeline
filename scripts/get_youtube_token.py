@@ -40,7 +40,12 @@ def main():
     print("Login with the YouTube account you want to post to.\n")
 
     flow = InstalledAppFlow.from_client_config(CLIENT_CONFIG, SCOPES)
-    creds = flow.run_local_server(port=8080)
+    # Desktop app uses run_local_server or run_console
+    try:
+        creds = flow.run_local_server(port=8080)
+    except Exception:
+        # Fallback — copy-paste method if browser doesn't open
+        creds = flow.run_console()
 
     print("\n✅ Authentication successful!")
     print("\n" + "=" * 50)
