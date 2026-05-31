@@ -73,12 +73,21 @@ jobs:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: python scripts/send_to_telegram.py
 
-      - name: Upload video as artifact
+      - name: Repurpose for YouTube Shorts
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
+        run: python scripts/repurpose_for_shorts.py
+
+      - name: Upload videos as artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fitfacts-video-${{ github.run_number }}
-          path: tmp/videos/*.mp4
+          name: fitfacts-videos-${{ github.run_number }}
+          path: |
+            tmp/videos/*.mp4
+            tmp/shorts/*.mp4
           retention-days: 7
 
       - name: Upload logs on failure
