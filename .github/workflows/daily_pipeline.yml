@@ -8,7 +8,10 @@ on:
     - cron: '30 7 * * *'
     # 7 PM IST = 1:30 PM UTC
     - cron: '30 13 * * *'
-  workflow_dispatch:  # manual trigger from GitHub UI anytime
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   generate-video:
@@ -24,25 +27,20 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install ffmpeg
-        run: sudo apt-get install -y ffmpeg
-
-      - name: Install dependencies
+      - name: Install system dependencies
         run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
           pip install httpx tenacity pydantic pydantic-settings \
             python-dotenv requests cloudinary imageio-ffmpeg \
             Pillow python-telegram-bot==21.6
 
       - name: Create required folders
-        run: mkdir -p logs tmp/videos tmp/audio assets music
-
-      - name: Copy logo to assets
-        run: |
-          if [ -f "assets/logo.png" ]; then
-            echo "Logo found"
-          else
-            echo "No logo found — skipping"
-          fi
+        run: mkdir -p logs tmp/videos tmp/audio assets music data
 
       - name: Generate video
         env:
@@ -56,9 +54,12 @@ jobs:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
-        run: python -m src.pipeline --niche fitness --dry-run
+        run: |
+          python -m src.pipeline --niche fitness --dry-run
+          echo "Pipeline exit code: $?"
 
       - name: Send to Telegram
+        if: always()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
@@ -72,9 +73,18 @@ jobs:
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: python scripts/send_to_telegram.py
 
-      - name: Upload video as artifact (backup)
+      - name: Upload video as artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: fitfacts-video-${{ github.run_number }}
           path: tmp/videos/*.mp4
           retention-days: 7
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-logs-${{ github.run_number }}
+          path: logs/
+          retention-days: 3
