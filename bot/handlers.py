@@ -4,10 +4,44 @@ Telegram Bot Handlers — all command logic lives here.
 
 import logging
 import os
+import json
+import urllib.request
 from pathlib import Path
 from telegram import Update
 from telegram.ext import ContextTypes
 from bot.pipeline_runner import run_pipeline_async
+
+GITHUB_TOKEN = os.getenv("GITHUB_ACTIONS_TOKEN", "")
+GITHUB_REPO = "Raj4478/fitness-pipeline"
+
+def _trigger_github_workflow(topic: str = "", workflow: str = "telegram_bot.yml") -> bool:
+    """Trigger GitHub Actions workflow via API."""
+    if not GITHUB_TOKEN:
+        return False
+    try:
+        url = f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/{workflow}/dispatches"
+        payload = {
+            "ref": "master",
+            "inputs": {
+                "topic": topic,
+                "command": "generate"
+            }
+        }
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            url, data=data,
+            headers={
+                "Authorization": f"Bearer {GITHUB_TOKEN}",
+                "Content-Type": "application/json",
+                "Accept": "application/vnd.github+json",
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as resp:
+            return resp.status == 204
+    except Exception as e:
+        logger.error("GitHub trigger failed: %s", e)
+        return False
 
 logger = logging.getLogger(__name__)
 
