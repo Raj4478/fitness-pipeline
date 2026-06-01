@@ -2,14 +2,16 @@ name: Telegram Bot Listener
 
 on:
   schedule:
-    # Run every 5 minutes to check for new Telegram messages
     - cron: '*/5 * * * *'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   listen:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
 
     steps:
       - name: Checkout
@@ -20,12 +22,17 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install deps
-        run: pip install requests
-
       - name: Poll Telegram & handle commands
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
           GH_ACTIONS_TOKEN: ${{ secrets.GH_ACTIONS_TOKEN }}
         run: python scripts/telegram_webhook.py
+
+      - name: Save offset back to repo
+        run: |
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          git add .telegram_offset 2>/dev/null || true
+          git diff --staged --quiet || git commit -m "chore: update telegram offset [skip ci]"
+          git push || true
