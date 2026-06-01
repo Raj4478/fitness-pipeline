@@ -151,6 +151,15 @@ jobs:
             tmp/shorts/*.mp4
           retention-days: 7
 
+      - name: Keep repo active
+        run: |
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          echo "Last run: $(date)" > .last_run
+          git add .last_run
+          git diff --staged --quiet || git commit -m "chore: keep workflow active [skip ci]"
+          git push || true
+
       - name: Upload logs as artifact
         if: always()
         uses: actions/upload-artifact@v4
