@@ -2,13 +2,18 @@ name: Daily FitFacts Video Generator
 
 on:
   schedule:
-    # 9 AM IST = 3:30 AM UTC
-    - cron: '30 3 * * *'
+    # 7 AM IST = 1:30 AM UTC
+    - cron: '30 1 * * *'
     # 1 PM IST = 7:30 AM UTC
     - cron: '30 7 * * *'
-    # 7 PM IST = 1:30 PM UTC
-    - cron: '30 13 * * *'
+    # 9 PM IST = 3:30 PM UTC
+    - cron: '30 15 * * *'
   workflow_dispatch:
+    inputs:
+      topic:
+        description: 'Topic to generate (leave empty for auto)'
+        required: false
+        default: ''
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -16,7 +21,7 @@ env:
 jobs:
   generate-video:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repo
@@ -37,12 +42,40 @@ jobs:
           pip install --upgrade pip
           pip install httpx tenacity pydantic pydantic-settings \
             python-dotenv requests cloudinary imageio-ffmpeg \
-            Pillow python-telegram-bot==21.6
+            Pillow python-telegram-bot==21.6 \
+            google-auth-oauthlib google-api-python-client
 
       - name: Create required folders
-        run: mkdir -p logs tmp/videos tmp/audio assets music data
+        run: mkdir -p logs tmp/videos tmp/audio tmp/shorts assets music data
+
+      - name: Copy logo to assets
+        run: |
+          if [ -f "assets/logo.png" ]; then
+            echo "Logo found"
+          else
+            echo "No logo found — skipping"
+          fi
+
+      - name: Notify Telegram — starting
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
+        run: |
+          python3 -c "
+          import urllib.request, json, os
+          token = os.environ['TELEGRAM_BOT_TOKEN']
+          chat_id = os.environ['TELEGRAM_CHAT_ID']
+          topic = '${{ github.event.inputs.topic }}' or 'auto'
+          msg = f'⏳ FitFacts pipeline started\nTopic: {topic}\nTime: $(date)'
+          url = f'https://api.telegram.org/bot{token}/sendMessage'
+          data = json.dumps({'chat_id': chat_id, 'text': msg}).encode()
+          req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+          urllib.request.urlopen(req)
+          print('Telegram notified')
+          "
 
       - name: Generate video
+        id: generate
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -55,21 +88,20 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
         run: |
-          python -m src.pipeline --niche fitness --dry-run
-          echo "Pipeline exit code: $?"
+          TOPIC="${{ github.event.inputs.topic }}"
+          if [ -n "$TOPIC" ]; then
+            python -m src.pipeline --niche fitness --topic "$TOPIC"
+          else
+            python -m src.pipeline --niche fitness
+          fi
 
-      - name: Send to Telegram
-        if: always()
+      - name: Send video to Telegram
+        if: success()
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
-          ELEVENLABS_API_KEY_2: ${{ secrets.ELEVENLABS_API_KEY_2 }}
-          ELEVENLABS_API_KEY_3: ${{ secrets.ELEVENLABS_API_KEY_3 }}
-          ELEVENLABS_VOICE_ID: ${{ secrets.ELEVENLABS_VOICE_ID }}
-          ELEVENLABS_MODEL_ID: eleven_flash_v2_5
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
         run: python scripts/send_to_telegram.py
 
@@ -79,10 +111,6 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
         run: python scripts/repurpose_for_shorts.py
-
-      - name: Install YouTube API dependencies
-        if: success()
-        run: pip install google-auth-oauthlib google-api-python-client
 
       - name: Upload to YouTube Shorts
         if: success()
@@ -94,6 +122,25 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
         run: python scripts/upload_to_youtube.py
 
+      - name: Notify Telegram on failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 -c "
+          import urllib.request, json, os
+          token = os.environ['TELEGRAM_BOT_TOKEN']
+          chat_id = os.environ['TELEGRAM_CHAT_ID']
+          run_id = os.environ['GITHUB_RUN_ID']
+          msg = f'❌ Pipeline failed!\nCheck logs: https://github.com/Raj4478/fitness-pipeline/actions/runs/{run_id}'
+          url = f'https://api.telegram.org/bot{token}/sendMessage'
+          data = json.dumps({'chat_id': chat_id, 'text': msg}).encode()
+          req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+          urllib.request.urlopen(req)
+          "
+
       - name: Upload videos as artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -104,8 +151,8 @@ jobs:
             tmp/shorts/*.mp4
           retention-days: 7
 
-      - name: Upload logs on failure
-        if: failure()
+      - name: Upload logs as artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pipeline-logs-${{ github.run_number }}
