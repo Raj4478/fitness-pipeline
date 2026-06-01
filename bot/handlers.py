@@ -11,7 +11,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from bot.pipeline_runner import run_pipeline_async
 
-GITHUB_TOKEN = os.getenv("GITHUB_ACTIONS_TOKEN", "")
+GITHUB_TOKEN = os.getenv("GH_ACTIONS_TOKEN", "")
 GITHUB_REPO = "Raj4478/fitness-pipeline"
 
 def _trigger_github_workflow(topic: str = "", workflow: str = "telegram_bot.yml") -> bool:
