@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_USER_ID = int(os.getenv("TELEGRAM_ALLOWED_USER_ID", "0"))
 
-TOPIC_LIST = TOPICS["fitness"]
+FITNESS_TOPICS = TOPICS["fitness"]
 TOPICS_PER_DAY = 3
 
 WEEK_SCHEDULE = [
@@ -88,7 +88,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _auth(update): return
-    topic_list = "\n".join([f"{i+1}. {t}" for i, t in enumerate(TOPIC_LIST)])
+    topic_list = "\n".join([f"{i+1}. {t}" for i, t in enumerate(FITNESS_TOPICS)])
     await update.message.reply_text(
         f"📋 *Available Topics:*\n\n{topic_list}\n\n"
         f"Use: `/generate protein myths`",

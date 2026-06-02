@@ -54,7 +54,7 @@ WEEKLY_TOPICS = {
         "cold water after workout myth",
         "processed food addiction",
         "yoga science benefits",
-        # Repeat to make 21 topics (3 per day)
+        # Repeat first topic to make 21 entries (20 unique + 1 repeat)
         "protein myths",
     ]
 }
