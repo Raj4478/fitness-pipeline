@@ -195,11 +195,15 @@ async def send_video_to_telegram(video_path: Path, caption: str, hashtags: str):
     from telegram import Bot
 
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    # Support both TELEGRAM_CHAT_ID and TELEGRAM_ALLOWED_USER_ID
+    chat_id = os.getenv("TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_ALLOWED_USER_ID", "")
 
     if not token or not chat_id:
-        logger.error("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set")
+        logger.error("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID/TELEGRAM_ALLOWED_USER_ID not set")
+        logger.error("TOKEN set: %s | CHAT_ID set: %s", bool(token), bool(chat_id))
         return False
+    
+    logger.info("Sending to chat_id: %s", chat_id)
 
     bot = Bot(token=token)
 
