@@ -26,6 +26,10 @@ from config.topics import TopicBank
 logger = logging.getLogger(__name__)
 
 
+def _is_public_url(value: str) -> bool:
+    return value.startswith("http://") or value.startswith("https://")
+
+
 def log_system_info():
     """Log system environment for debugging."""
     logger.info("=" * 60)
@@ -61,10 +65,11 @@ async def run_pipeline(
     niche: str,
     topic: Optional[str] = None,
     dry_run: bool = False,
+    settings: Optional[Settings] = None,
 ) -> dict:
     tracker = RunTracker()
     run_id = tracker.start_run(niche)
-    settings = Settings()
+    settings = settings or Settings()
 
     logger.info("=" * 60)
     logger.info("RUN %s STARTED | niche=%s dry_run=%s", run_id, niche, dry_run)
@@ -125,12 +130,37 @@ async def run_pipeline(
             logger.info("[6/7] Publishing...")
             publisher = BufferPublisher(settings)
             caption = script.build_caption(niche)
-            post_ids = await publisher.publish(
-                video_url=render_result.video_url,
-                caption=caption,
-                channels=settings.buffer_channels,
-            )
-            logger.info("[6/7] ✅ Published | post_ids=%s", post_ids)
+            publish_url = render_result.video_url
+            if not _is_public_url(publish_url):
+                video_path = Path(publish_url)
+                if not video_path.exists():
+                    logger.warning(
+                        "[6/7] Rendered video not found at %s — skipping publish",
+                        video_path,
+                    )
+                    publish_url = ""
+                elif (
+                    settings.cloudinary_cloud_name
+                    and settings.cloudinary_api_key
+                    and settings.cloudinary_api_secret
+                ):
+                    uploader = MediaUploader(settings)
+                    publish_url = await uploader.upload_video(video_path)
+                else:
+                    logger.warning(
+                        "[6/7] No public video URL and Cloudinary not configured — skipping publish"
+                    )
+                    publish_url = ""
+
+            if publish_url:
+                post_ids = await publisher.publish(
+                    video_url=publish_url,
+                    caption=caption,
+                    channels=settings.buffer_channels,
+                )
+                logger.info("[6/7] ✅ Published | post_ids=%s", post_ids)
+            else:
+                logger.info("[6/7] ⏭️  Skipping publish — no public URL available")
         else:
             logger.info("[6/7] ⏭️  Dry run — skipping publish")
 
@@ -192,13 +222,15 @@ def main():
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
+    settings = Settings()
+
     # Enhanced logging setup
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
     log_file = log_dir / f"pipeline_{datetime.utcnow().strftime('%Y%m%d')}.log"
 
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
         handlers=[
             logging.StreamHandler(sys.stdout),
@@ -218,6 +250,7 @@ def main():
             niche=args.niche,
             topic=args.topic or None,
             dry_run=args.dry_run,
+            settings=settings,
         )
     )
 

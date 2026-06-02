@@ -10,9 +10,11 @@ from pathlib import Path
 from telegram import Update
 from telegram.ext import ContextTypes
 from bot.pipeline_runner import run_pipeline_async
+from config.topics import TOPICS, WEEKLY_TOPICS
 
 GITHUB_TOKEN = os.getenv("GH_ACTIONS_TOKEN", "")
-GITHUB_REPO = "Raj4478/fitness-pipeline"
+GITHUB_REPO = os.getenv("GITHUB_REPO", "Raj4478/fitness-pipeline")
+GITHUB_DEFAULT_BRANCH = os.getenv("GITHUB_DEFAULT_BRANCH", "master")
 
 def _trigger_github_workflow(topic: str = "", workflow: str = "telegram_bot.yml") -> bool:
     """Trigger GitHub Actions workflow via API."""
@@ -21,7 +23,7 @@ def _trigger_github_workflow(topic: str = "", workflow: str = "telegram_bot.yml"
     try:
         url = f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/{workflow}/dispatches"
         payload = {
-            "ref": "master",
+            "ref": GITHUB_DEFAULT_BRANCH,
             "inputs": {
                 "topic": topic,
                 "command": "generate"
@@ -47,39 +49,12 @@ logger = logging.getLogger(__name__)
 
 ALLOWED_USER_ID = int(os.getenv("TELEGRAM_ALLOWED_USER_ID", "0"))
 
-TOPICS = [
-    "protein myths", "vitamin D deficiency india", "sitting disease office workers",
-    "sleep and muscle growth", "sugar free drinks danger", "walking vs running",
-    "creatine facts", "intermittent fasting facts", "gym myths busted",
-    "cardio vs weight training", "stress and belly fat", "overtraining signs",
-    "morning workout vs evening", "hydration myths", "BMI is misleading",
-    "indian diet protein sources", "gut health india", "cold water after workout myth",
-    "processed food addiction", "yoga science benefits",
-]
+FITNESS_TOPICS = TOPICS["fitness"]
+TOPICS_PER_DAY = 3
 
 WEEK_SCHEDULE = [
-    # (day, topic)
-    (1, "protein myths"),
-    (1, "vitamin D deficiency india"),
-    (1, "sitting disease office workers"),
-    (2, "sleep and muscle growth"),
-    (2, "sugar free drinks danger"),
-    (2, "walking vs running"),
-    (3, "creatine facts"),
-    (3, "intermittent fasting facts"),
-    (3, "gym myths busted"),
-    (4, "cardio vs weight training"),
-    (4, "stress and belly fat"),
-    (4, "overtraining signs"),
-    (5, "morning workout vs evening"),
-    (5, "hydration myths"),
-    (5, "BMI is misleading"),
-    (6, "indian diet protein sources"),
-    (6, "gut health india"),
-    (6, "cold water after workout myth"),
-    (7, "processed food addiction"),
-    (7, "yoga science benefits"),
-    (7, "protein myths"),
+    (idx // TOPICS_PER_DAY + 1, topic)
+    for idx, topic in enumerate(WEEKLY_TOPICS["fitness"])
 ]
 
 
@@ -113,7 +88,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def topics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _auth(update): return
-    topic_list = "\n".join([f"{i+1}. {t}" for i, t in enumerate(TOPICS)])
+    topic_list = "\n".join([f"{i+1}. {t}" for i, t in enumerate(FITNESS_TOPICS)])
     await update.message.reply_text(
         f"📋 *Available Topics:*\n\n{topic_list}\n\n"
         f"Use: `/generate protein myths`",

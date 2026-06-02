@@ -32,6 +32,33 @@ TOPICS = {
     ]
 }
 
+WEEKLY_TOPICS = {
+    "fitness": [
+        "protein myths",
+        "vitamin D deficiency india",
+        "sitting disease office workers",
+        "sleep and muscle growth",
+        "sugar free drinks danger",
+        "walking vs running",
+        "creatine facts",
+        "intermittent fasting facts",
+        "gym myths busted",
+        "cardio vs weight training",
+        "stress and belly fat",
+        "overtraining signs",
+        "morning workout vs evening",
+        "hydration myths",
+        "BMI is misleading",
+        "indian diet protein sources",
+        "gut health india",
+        "cold water after workout myth",
+        "processed food addiction",
+        "yoga science benefits",
+        # Repeat first topic to make 21 entries (20 unique + 1 repeat)
+        "protein myths",
+    ]
+}
+
 USED_TOPICS_FILE = Path("data/used_topics.json")
 
 

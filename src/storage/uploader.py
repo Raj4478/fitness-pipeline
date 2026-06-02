@@ -46,3 +46,28 @@ class MediaUploader:
             pass
 
         return url
+
+    async def upload_video(self, video_path: Path, cleanup: bool = False) -> str:
+        """
+        Upload MP4 to Cloudinary.
+
+        Returns:
+            Public HTTPS URL of the uploaded video.
+        """
+        result = cloudinary.uploader.upload(
+            str(video_path),
+            resource_type="video",
+            folder="content-pipeline/videos",
+            overwrite=False,
+            invalidate=True,
+        )
+        url: str = result["secure_url"]
+        logger.info("Video uploaded to Cloudinary: %s", url)
+
+        if cleanup:
+            try:
+                video_path.unlink()
+            except OSError:
+                pass
+
+        return url

@@ -42,11 +42,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
-          pip install httpx tenacity pydantic pydantic-settings \
-            python-dotenv requests cloudinary imageio-ffmpeg \
-            Pillow python-telegram-bot==21.6 \
-            google-auth-oauthlib google-api-python-client \
-            gtts
+          pip install -r requirements.txt
 
       - name: Create required folders
         run: mkdir -p logs tmp/videos tmp/audio tmp/shorts assets music data
@@ -80,6 +76,7 @@ jobs:
       - name: Generate video
         id: generate
         env:
+          LLM_PROVIDER: gemini
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}

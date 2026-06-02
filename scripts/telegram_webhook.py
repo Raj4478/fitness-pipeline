@@ -6,9 +6,16 @@ Saves offset to file so messages are never missed or double-processed.
 import json
 import logging
 import os
+import sys
 import time
 import urllib.request
 from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from config.topics import TOPICS, WEEKLY_TOPICS
 
 logging.basicConfig(level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s")
@@ -17,7 +24,8 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 ALLOWED_USER_ID = int(os.environ["TELEGRAM_ALLOWED_USER_ID"])
 GH_TOKEN = os.environ.get("GH_ACTIONS_TOKEN", "")
-GH_REPO = "Raj4478/fitness-pipeline"
+GH_REPO = os.getenv("GITHUB_REPO", "Raj4478/fitness-pipeline")
+GH_DEFAULT_BRANCH = os.getenv("GITHUB_DEFAULT_BRANCH", "master")
 BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 OFFSET_FILE = Path(".telegram_offset")
 
@@ -52,7 +60,7 @@ def trigger_workflow(topic: str = "") -> bool:
         return False
     try:
         url = f"https://api.github.com/repos/{GH_REPO}/actions/workflows/telegram_bot.yml/dispatches"
-        payload = {"ref": "master", "inputs": {"topic": topic, "command": "generate"}}
+        payload = {"ref": GH_DEFAULT_BRANCH, "inputs": {"topic": topic, "command": "generate"}}
         data = json.dumps(payload).encode()
         req = urllib.request.Request(
             url, data=data,
@@ -110,19 +118,7 @@ def handle(chat_id: int, text: str):
             send(chat_id, "❌ Trigger failed\nCheck: GH\\_ACTIONS\\_TOKEN secret in GitHub")
 
     elif text == "/week":
-        topics = [
-            "protein myths", "vitamin D deficiency india",
-            "sitting disease office workers", "sleep and muscle growth",
-            "sugar free drinks danger", "walking vs running",
-            "creatine facts", "intermittent fasting facts",
-            "gym myths busted", "cardio vs weight training",
-            "stress and belly fat", "overtraining signs",
-            "morning workout vs evening", "hydration myths",
-            "BMI is misleading", "indian diet protein sources",
-            "gut health india", "cold water after workout myth",
-            "processed food addiction", "yoga science benefits",
-            "protein myths"
-        ]
+        topics = WEEKLY_TOPICS["fitness"]
         send(chat_id, f"📅 Triggering *21 videos*...\nEach will arrive separately ✅")
         success = 0
         for topic in topics:
@@ -132,15 +128,7 @@ def handle(chat_id: int, text: str):
         send(chat_id, f"🎉 *Done!* {success}/21 triggered successfully.")
 
     elif text == "/topics":
-        topics_list = [
-            "protein myths", "vitamin D deficiency india", "sitting disease",
-            "sleep and muscle growth", "sugar free drinks", "walking vs running",
-            "creatine facts", "intermittent fasting", "gym myths busted",
-            "cardio vs weights", "stress and belly fat", "overtraining",
-            "morning vs evening workout", "hydration myths", "BMI myths",
-            "indian diet protein", "gut health", "cold water myth",
-            "processed food", "yoga science"
-        ]
+        topics_list = TOPICS["fitness"]
         msg = "📋 *Topics:*\n\n" + "\n".join(
             f"{i+1}. {t}" for i, t in enumerate(topics_list)
         )
