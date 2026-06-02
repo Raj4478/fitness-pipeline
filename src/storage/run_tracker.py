@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
 
 
 class RunTracker:
-    def __init__(self, db_path: Path):
+    def __init__(self, db_path: Path = Path("data/runs.db")):
         self.db_path = db_path
         self._init_db()
 
