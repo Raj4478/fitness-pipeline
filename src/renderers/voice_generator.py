@@ -134,8 +134,23 @@ class VoiceGenerator:
         )
         return self._generate_windows_tts(text, audio_id)
 
-    def _generate_windows_tts(self, text: str, audio_id: str) -> Path:
-        """Generate a local WAV voiceover using Windows SAPI."""
+    def _generate_fallback_tts(self, text: str, audio_id: str) -> Path:
+        """
+        Cross-platform TTS fallback.
+        Windows: PowerShell SAPI
+        Linux (GitHub Actions): gTTS (Google TTS, free)
+        """
+        import platform
+        system = platform.system()
+        logger.info("Using fallback TTS on %s", system)
+
+        if system == "Windows":
+            return self._windows_tts(text, audio_id)
+        else:
+            return self._gtts_fallback(text, audio_id)
+
+    def _windows_tts(self, text: str, audio_id: str) -> Path:
+        """Windows PowerShell SAPI TTS."""
         text_path = OUTPUT_DIR / f"voice_{audio_id}.txt"
         audio_path = OUTPUT_DIR / f"voice_{audio_id}.wav"
         text_path.write_text(text, encoding="utf-8")
@@ -148,22 +163,44 @@ class VoiceGenerator:
             "$text = Get-Content -LiteralPath "
             f"{ps_quote(text_path)} -Raw; "
             "$speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-            "$speaker.Rate = 1; "
-            "$speaker.Volume = 100; "
-            "$speaker.SetOutputToWaveFile("
-            f"{ps_quote(audio_path)}"
-            "); "
-            "$speaker.Speak($text); "
-            "$speaker.Dispose();"
+            "$speaker.Rate = 1; $speaker.Volume = 100; "
+            f"$speaker.SetOutputToWaveFile({ps_quote(audio_path)}); "
+            "$speaker.Speak($text); $speaker.Dispose();"
         )
         result = subprocess.run(
             ["powershell", "-NoProfile", "-Command", command],
-            capture_output=True,
-            text=True,
+            capture_output=True, text=True,
         )
         if result.returncode != 0:
-            raise RuntimeError(f"Local Windows TTS failed:\n{result.stderr[-600:]}")
+            raise RuntimeError(f"Windows TTS failed:\n{result.stderr[-400:]}")
+        logger.info("Windows TTS saved: %s", audio_path)
+        return audio_path
+
+    def _gtts_fallback(self, text: str, audio_id: str) -> Path:
+        """
+        Google TTS fallback for Linux/GitHub Actions.
+        Free, no API key, supports Hindi.
+        """
+        try:
+            from gtts import gTTS
+        except ImportError:
+            subprocess.run(
+                ["pip", "install", "gtts", "-q"],
+                capture_output=True
+            )
+            from gtts import gTTS
+
+        audio_path = OUTPUT_DIR / f"voice_{audio_id}.mp3"
+        logger.info("Using gTTS fallback (Hindi)...")
+
+        # gTTS with Hindi language
+        tts = gTTS(text=text, lang="hi", slow=False)
+        tts.save(str(audio_path))
 
         size_kb = audio_path.stat().st_size // 1024
-        logger.info("Local TTS audio saved: %s (%d KB)", audio_path, size_kb)
+        logger.info("gTTS audio saved: %s (%d KB)", audio_path, size_kb)
         return audio_path
+
+    # Keep old name as alias for compatibility
+    def _generate_windows_tts(self, text: str, audio_id: str) -> Path:
+        return self._generate_fallback_tts(text, audio_id)

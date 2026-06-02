@@ -45,7 +45,8 @@ jobs:
           pip install httpx tenacity pydantic pydantic-settings \
             python-dotenv requests cloudinary imageio-ffmpeg \
             Pillow python-telegram-bot==21.6 \
-            google-auth-oauthlib google-api-python-client
+            google-auth-oauthlib google-api-python-client \
+            gtts
 
       - name: Create required folders
         run: mkdir -p logs tmp/videos tmp/audio tmp/shorts assets music data
