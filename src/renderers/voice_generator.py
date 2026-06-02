@@ -183,12 +183,8 @@ class VoiceGenerator:
         """
         try:
             from gtts import gTTS
-        except ImportError:
-            subprocess.run(
-                ["pip", "install", "gtts", "-q"],
-                capture_output=True
-            )
-            from gtts import gTTS
+        except ImportError as exc:
+            raise RuntimeError("gTTS is not installed. Install it with `pip install gTTS`.") from exc
 
         audio_path = OUTPUT_DIR / f"voice_{audio_id}.mp3"
         logger.info("Using gTTS fallback (Hindi)...")

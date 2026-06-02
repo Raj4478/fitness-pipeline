@@ -256,6 +256,8 @@ def get_topic_from_logs() -> str:
         for line in content.split("\n"):
             if "Topic selected:" in line:
                 return line.split("Topic selected:")[-1].strip().lower()
+            if "Topic:" in line:
+                return line.split("Topic:")[-1].strip().lower()
     except Exception:
         pass
     return ""

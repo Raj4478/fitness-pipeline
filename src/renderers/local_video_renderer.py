@@ -3,6 +3,7 @@ Local Video Renderer — ffmpeg, styled captions, background music, outro card.
 No segfaults. No ImageMagick. No PIL.
 """
 
+import asyncio
 import logging, math, re, textwrap, uuid, subprocess, shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +57,20 @@ class LocalVideoRenderer:
         logger.info("Using ffmpeg: %s", self._ffmpeg)
 
     async def render(self, template_id, hook_text, body_text, video_url, audio_url,
+                     bg_music_path=None, topic="", subject=""):
+        return await asyncio.to_thread(
+            self._render_sync,
+            template_id,
+            hook_text,
+            body_text,
+            video_url,
+            audio_url,
+            bg_music_path,
+            topic,
+            subject,
+        )
+
+    def _render_sync(self, template_id, hook_text, body_text, video_url, audio_url,
                      bg_music_path=None, topic="", subject=""):
         rid = uuid.uuid4().hex[:10]
         logger.info("LocalRenderer [%s] starting render", rid)

@@ -25,3 +25,10 @@ cloudinary==1.40.0
 
 # Telegram Bot
 python-telegram-bot==21.6
+
+# Google APIs (YouTube upload)
+google-auth-oauthlib==1.2.1
+google-api-python-client==2.137.0
+
+# TTS fallback
+gTTS==2.5.1
