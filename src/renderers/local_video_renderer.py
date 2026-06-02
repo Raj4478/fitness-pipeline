@@ -132,38 +132,39 @@ class LocalVideoRenderer:
                 f":enable='between(t,0,{hook_dur:.2f})'"
             )
 
-        chunks = self._caption_chunks(body_text)
-        if chunks:
-            available_dur = max(1.0, voice_dur - hook_dur)
-            weights = [max(8, len(chunk)) for chunk in chunks]
-            total_weight = sum(weights)
-            cursor = hook_dur
-            cap_y = int(TARGET_H * CAPTION_Y_POSITION)
-            cap_line_h = CAPTION_FONT_SIZE + 12
+        # ── Whisper-synced captions ────────────────────────────────────
+        segments = self._transcribe_audio(audio)
+        captions = self._segments_to_caption_timing(
+            segments, hook_dur, voice_dur, body_text
+        )
+        logger.info("Caption timing: %d chunks (%s)",
+            len(captions), "Whisper" if segments else "fallback")
 
-            for chunk, weight in zip(chunks, weights):
-                chunk_dur = available_dur * (weight / total_weight)
-                ts = cursor
-                te = min(voice_dur, ts + chunk_dur)
-                cursor = te
-                enable = f"between(t,{ts:.3f},{te:.3f})"
-                lines = textwrap.wrap(chunk, width=24) or [chunk]
-                box_h = len(lines) * cap_line_h + 40
-                box_y = cap_y - 20
+        cap_y = int(TARGET_H * CAPTION_Y_POSITION)
+        cap_line_h = CAPTION_FONT_SIZE + 12
 
+        for cap in captions:
+            ts = cap["start"]
+            te = cap["end"]
+            chunk = cap["text"]
+            enable = f"between(t,{ts:.3f},{te:.3f})"
+            lines = textwrap.wrap(chunk, width=24) or [chunk]
+            box_h = len(lines) * cap_line_h + 40
+            box_y = cap_y - 20
+
+            filters.append(
+                f"drawbox=x=30:y={box_y}:w={TARGET_W-60}:h={box_h}"
+                f":color=black@0.6:t=fill:enable='{enable}'"
+            )
+            for j, line in enumerate(lines):
+                y = cap_y + j * cap_line_h
                 filters.append(
-                    f"drawbox=x=30:y={box_y}:w={TARGET_W-60}:h={box_h}"
-                    f":color=black@0.6:t=fill:enable='{enable}'"
+                    f"drawtext=fontfile='{font}':text='{self._clean(line)}'"
+                    f":fontsize={CAPTION_FONT_SIZE}:fontcolor=white"
+                    f":borderw=2:bordercolor=black@0.9"
+                    f":x=(w-text_w)/2:y={y}"
+                    f":enable='{enable}'"
                 )
-                for j, line in enumerate(lines):
-                    y = cap_y + j * cap_line_h
-                    filters.append(
-                        f"drawtext=fontfile='{font}':text='{self._clean(line)}'"
-                        f":fontsize={CAPTION_FONT_SIZE}:fontcolor=white"
-                        f":borderw=2:bordercolor=black@0.9"
-                        f":x=(w-text_w)/2:y={y}"
-                        f":enable='{enable}'"
-                    )
 
         # ── Outro card (last OUTRO_DURATION seconds) ───────────────────
         outro_start = voice_dur
@@ -310,6 +311,101 @@ class LocalVideoRenderer:
             if Path(f).exists():
                 return f.replace("\\", "/").replace("C:/", "C\\:/")
         raise RuntimeError("No font found.")
+
+
+    def _transcribe_audio(self, audio_path: Path) -> list[dict]:
+        """Transcribe audio using Groq Whisper. Returns segments with timestamps."""
+        import os, httpx
+        api_key = os.getenv("GROQ_API_KEY", "")
+        if not api_key:
+            logger.warning("GROQ_API_KEY not set — using fallback timing")
+            return []
+        try:
+            logger.info("Transcribing with Groq Whisper...")
+            with open(audio_path, "rb") as f:
+                audio_data = f.read()
+            with httpx.Client(timeout=30) as client:
+                resp = client.post(
+                    "https://api.groq.com/openai/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    files={"file": (audio_path.name, audio_data, "audio/mpeg")},
+                    data={
+                        "model": "whisper-large-v3-turbo",
+                        "response_format": "verbose_json",
+                        "language": "hi",
+                    },
+                )
+                resp.raise_for_status()
+                segments = resp.json().get("segments", [])
+                logger.info("Whisper: %d segments transcribed", len(segments))
+                return segments
+        except Exception as e:
+            logger.warning("Whisper failed: %s — using fallback", e)
+            return []
+
+    def _segments_to_caption_timing(
+        self, segments: list[dict], hook_dur: float,
+        voice_dur: float, body_text: str
+    ) -> list[dict]:
+        """Convert Whisper segments to synced caption chunks."""
+        if not segments:
+            return self._fallback_timing(body_text, hook_dur, voice_dur)
+
+        captions = []
+        current_words = []
+        current_start = None
+        current_end = None
+
+        for seg in segments:
+            seg_start = float(seg.get("start", 0))
+            seg_end = float(seg.get("end", 0))
+            seg_text = seg.get("text", "").strip()
+            if seg_end <= hook_dur:
+                continue
+            words = seg_text.split()
+            for word in words:
+                if current_start is None:
+                    current_start = max(seg_start, hook_dur)
+                current_end = seg_end
+                current_words.append(word)
+                if len(current_words) >= WORDS_PER_CAPTION:
+                    captions.append({
+                        "text": " ".join(current_words),
+                        "start": current_start,
+                        "end": current_end,
+                    })
+                    current_words = []
+                    current_start = None
+
+        if current_words and current_start is not None:
+            captions.append({
+                "text": " ".join(current_words),
+                "start": current_start,
+                "end": min(current_end or voice_dur, voice_dur),
+            })
+
+        return captions if captions else self._fallback_timing(body_text, hook_dur, voice_dur)
+
+    def _fallback_timing(
+        self, body_text: str, hook_dur: float, voice_dur: float
+    ) -> list[dict]:
+        """Fallback: distribute captions by character weight."""
+        chunks = self._caption_chunks(body_text)
+        if not chunks:
+            return []
+        available = max(1.0, voice_dur - hook_dur)
+        total_weight = sum(max(8, len(c)) for c in chunks)
+        captions = []
+        cursor = hook_dur
+        for chunk in chunks:
+            dur = available * (max(8, len(chunk)) / total_weight)
+            captions.append({
+                "text": chunk,
+                "start": cursor,
+                "end": min(voice_dur, cursor + dur),
+            })
+            cursor += dur
+        return captions
 
     def _caption_chunks(self, text: str) -> list[str]:
         """Split captions into readable sentence/phrase chunks."""
