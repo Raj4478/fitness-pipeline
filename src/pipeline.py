@@ -62,8 +62,8 @@ async def run_pipeline(
     topic: Optional[str] = None,
     dry_run: bool = False,
 ) -> dict:
-    run_id = f"{niche[:3]}{datetime.utcnow().strftime('%H%M%S%f')[:10]}"
     tracker = RunTracker()
+    run_id = tracker.start_run(niche)
     settings = Settings()
 
     logger.info("=" * 60)
@@ -126,8 +126,9 @@ async def run_pipeline(
             publisher = BufferPublisher(settings)
             caption = script.build_caption(niche)
             post_ids = await publisher.publish(
-                video_path=Path(render_result.video_url),
+                video_url=render_result.video_url,
                 caption=caption,
+                channels=settings.buffer_channel_ids,
             )
             logger.info("[6/7] ✅ Published | post_ids=%s", post_ids)
         else:
@@ -148,7 +149,12 @@ async def run_pipeline(
             "dry_run": dry_run,
             "timestamp": datetime.utcnow().isoformat(),
         }
-        tracker.save(result)
+        tracker.complete_run(run_id, {
+            "topic": selected_topic,
+            "hook": script.hook,
+            "video_url": render_result.video_url,
+            "post_ids": post_ids,
+        })
         logger.info("=" * 60)
         logger.info("RUN %s COMPLETE ✅", run_id)
         logger.info("  Video: %s", render_result.video_url)
@@ -171,16 +177,10 @@ async def run_pipeline(
         logger.error("=" * 60)
 
         # Save failed run
-        tracker.save({
-            "status": "failed",
-            "run_id": run_id,
-            "niche": niche,
-            "topic": topic or "unknown",
-            "error_type": type(exc).__name__,
-            "error_message": str(exc),
-            "traceback": tb,
-            "timestamp": datetime.utcnow().isoformat(),
-        })
+        try:
+            tracker.fail_run(run_id, f"{type(exc).__name__}: {str(exc)}")
+        except Exception:
+            pass
         raise
 
 
