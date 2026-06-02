@@ -217,7 +217,7 @@ async def send_video_to_telegram(video_path: Path, caption: str, hashtags: str):
                  f"📁 `{video_path.name}`\n"
                  f"📊 Size: {video_path.stat().st_size // 1024}KB\n\n"
                  f"Sending video now...",
-            parse_mode="Markdown"
+            parse_mode=None
         )
 
         # Send video
@@ -236,7 +236,7 @@ async def send_video_to_telegram(video_path: Path, caption: str, hashtags: str):
                  f"{caption}\n\n"
                  f"{hashtags}\n\n"
                  f"💡 _Tip: Put hashtags in first comment for cleaner caption_",
-            parse_mode="Markdown"
+            parse_mode=None
         )
 
     logger.info("Video sent to Telegram ✅")

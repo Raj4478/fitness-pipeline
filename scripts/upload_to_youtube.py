@@ -196,15 +196,19 @@ async def notify_telegram(video_url: str, video_path: Path, topic: str):
 
     yt_data = TOPIC_YOUTUBE_DATA.get(topic, DEFAULT_YT_DATA)
 
+    # Clean title — remove special chars that break Markdown
+    hook = get_hook_from_logs() or yt_data['title']
+    safe_title = hook[:80].replace('`', '').replace('*', '').replace('_', '').replace('[', '').replace(']', '')
+
     bot = Bot(token=token)
     async with bot:
         await bot.send_message(
             chat_id=chat_id,
-            text=f"🎬 *YouTube Shorts Uploaded!*\n\n"
+            text=f"🎬 YouTube Shorts Uploaded!\n\n"
                  f"🔗 {video_url}\n\n"
-                 f"📋 *Title:*\n`{get_hook_from_logs()[:80] or yt_data['title'][:80]}`\n\n"
+                 f"📋 Title: {safe_title}\n\n"
                  f"✅ Live on YouTube now!",
-            parse_mode="Markdown"
+            parse_mode=None
         )
 
 
