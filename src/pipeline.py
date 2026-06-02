@@ -128,7 +128,7 @@ async def run_pipeline(
             post_ids = await publisher.publish(
                 video_url=render_result.video_url,
                 caption=caption,
-                channels=settings.buffer_channel_ids,
+                channels=settings.buffer_channels,
             )
             logger.info("[6/7] ✅ Published | post_ids=%s", post_ids)
         else:
