@@ -112,7 +112,7 @@ class VideoAssetFetcher:
             params={
                 "query": query,
                 "orientation": "portrait",
-                "size": "medium",
+                "size": "large",
                 "per_page": 10,
             },
         )
