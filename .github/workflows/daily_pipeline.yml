@@ -126,6 +126,20 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
         run: python scripts/upload_to_youtube.py
 
+      - name: Print error summary on failure
+        if: failure()
+        run: |
+          echo "=========================================="
+          echo "PIPELINE FAILURE SUMMARY"
+          echo "=========================================="
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Run #:  ${{ github.run_number }}"
+          echo "Time:   $(date)"
+          echo "------------------------------------------"
+          echo "Last 50 lines of pipeline log:"
+          cat logs/pipeline_*.log 2>/dev/null | tail -50 || echo "No log file found"
+          echo "=========================================="
+
       - name: Notify Telegram on failure
         if: failure()
         env:
