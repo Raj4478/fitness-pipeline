@@ -68,6 +68,42 @@ DEFAULT_YT_DATA = {
 }
 
 
+def get_hook_from_logs() -> str:
+    """Extract actual hook text from pipeline logs."""
+    log_dir = Path("logs")
+    if not log_dir.exists():
+        return ""
+    logs = sorted(log_dir.glob("pipeline_*.log"), reverse=True)
+    if not logs:
+        return ""
+    try:
+        content = logs[0].read_text()
+        for line in content.split("\n"):
+            if "hook=" in line:
+                hook = line.split("hook=")[-1].strip()
+                # Clean up hook for YouTube title
+                for ch in ["*", "_", "`", "#"]:
+                    hook = hook.replace(ch, "")
+                return hook[:80].strip()
+    except Exception:
+        pass
+    return ""
+
+
+def build_title_from_hook(hook: str, topic: str) -> str:
+    """Build YouTube title from hook + topic tags."""
+    if not hook:
+        return DEFAULT_YT_DATA["title"]
+    # Add shorts tag if not present
+    title = hook
+    if "#shorts" not in title.lower():
+        title = f"{title} #shorts"
+    if "#fitness" not in title.lower():
+        title = f"{title} #fitness"
+    # YouTube title max 100 chars
+    return title[:97] + "..." if len(title) > 100 else title
+
+
 def get_youtube_service():
     """Build YouTube API service using refresh token."""
     from google.oauth2.credentials import Credentials
@@ -98,13 +134,21 @@ def upload_to_youtube(video_path: Path, topic: str) -> str:
 
     yt_data = TOPIC_YOUTUBE_DATA.get(topic, DEFAULT_YT_DATA)
 
-    youtube = get_youtube_service()
+    # Use actual hook from pipeline as title — much better CTR
+    hook = get_hook_from_logs()
+    if hook:
+        final_title = build_title_from_hook(hook, topic)
+        logger.info("Title from hook: %s", final_title)
+    else:
+        final_title = yt_data["title"]
+        logger.info("Title from preset: %s", final_title)
 
+    youtube = get_youtube_service()
     logger.info("Uploading to YouTube: %s", video_path.name)
 
     body = {
         "snippet": {
-            "title": yt_data["title"][:100],  # YouTube title limit
+            "title": final_title[:100],  # YouTube title limit
             "description": yt_data["description"][:5000],
             "tags": yt_data["tags"],
             "categoryId": "17",  # Sports category
@@ -158,7 +202,7 @@ async def notify_telegram(video_url: str, video_path: Path, topic: str):
             chat_id=chat_id,
             text=f"🎬 *YouTube Shorts Uploaded!*\n\n"
                  f"🔗 {video_url}\n\n"
-                 f"📋 *Title:*\n`{yt_data['title'][:80]}`\n\n"
+                 f"📋 *Title:*\n`{get_hook_from_logs()[:80] or yt_data['title'][:80]}`\n\n"
                  f"✅ Live on YouTube now!",
             parse_mode="Markdown"
         )
