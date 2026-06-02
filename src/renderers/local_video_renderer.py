@@ -301,17 +301,33 @@ class LocalVideoRenderer:
         return None
 
     def _find_font(self):
-        for f in [
+        """
+        Find a font that supports Hindi/Devanagari + Latin (Hinglish).
+        Priority: Noto Sans Devanagari > Mangal > fallback Latin fonts.
+        """
+        candidates = [
+            # Hindi-capable fonts — Windows
+            "C:/Windows/Fonts/NotoSansDevanagari-Bold.ttf",
+            "C:/Windows/Fonts/NotoSansDevanagari-Regular.ttf",
+            "C:/Windows/Fonts/mangal.ttf",       # Mangal — standard Hindi font on Windows
+            "C:/Windows/Fonts/aparaj.ttf",        # Aparajita — Windows Hindi font
+            "C:/Windows/Fonts/utsaah.ttf",        # Utsaah — Windows Hindi font
+            "C:/Windows/Fonts/kokila.ttf",        # Kokila — Windows Hindi font
+            # Hindi-capable fonts — Linux (GitHub Actions)
+            "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+            "/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+            # Latin fallback
             "C:/Windows/Fonts/arialbd.ttf",
             "C:/Windows/Fonts/arial.ttf",
-            "C:/Windows/Fonts/calibrib.ttf",
-            "C:/Windows/Fonts/calibri.ttf",
-            "C:/Windows/Fonts/verdana.ttf",
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        ]:
+        ]
+        for f in candidates:
             if Path(f).exists():
+                logger.info("Using font: %s", f)
                 return f.replace("\\", "/").replace("C:/", "C\\:/")
-        raise RuntimeError("No font found.")
+        raise RuntimeError("No Hindi-capable font found. Install Noto Sans Devanagari.")
 
 
     def _transcribe_audio(self, audio_path: Path) -> list[dict]:
@@ -437,6 +453,19 @@ class LocalVideoRenderer:
             if current:
                 chunks.append(" ".join(current))
         return chunks
+
+    def _to_roman_hinglish(self, text: str) -> str:
+        """
+        If text contains Devanagari, use Roman Hinglish body_text instead.
+        Captions should always be Roman script for readability on screen.
+        This is called when building caption filters.
+        """
+        # Check if text has Devanagari characters
+        has_devanagari = any('\u0900' <= c <= '\u097F' for c in text)
+        if has_devanagari:
+            # Return empty — caller should use roman body_text instead
+            return ""
+        return text
 
     def _clean(self, text):
         for ch in ["'", ":", "\\", "[", "]", "=", ",", "%", '"', "{", "}"]:
