@@ -50,9 +50,10 @@ logger = logging.getLogger(__name__)
 ALLOWED_USER_ID = int(os.getenv("TELEGRAM_ALLOWED_USER_ID", "0"))
 
 TOPIC_LIST = TOPICS["fitness"]
+TOPICS_PER_DAY = 3
 
 WEEK_SCHEDULE = [
-    (idx // 3 + 1, topic)
+    (idx // TOPICS_PER_DAY + 1, topic)
     for idx, topic in enumerate(WEEKLY_TOPICS["fitness"])
 ]
 
