@@ -148,12 +148,16 @@ async def run_pipeline(
         # ── 4. Voiceover ───────────────────────────────────────────────
         logger.info("[4/7] Generating voiceover via ElevenLabs...")
         voice_gen = VoiceGenerator(settings)
-        audio_path = await voice_gen.generate(
+        audio_path, voice_provider = await voice_gen.generate(
             text=script.tts_text,
             topic=selected_topic,
         )
-        logger.info("[4/7] ✅ Audio: %s (%.1f KB)",
-            audio_path, audio_path.stat().st_size / 1024)
+        logger.info("[4/7] ✅ Audio: %s (%.1f KB) | provider=%s model=%s",
+            audio_path, audio_path.stat().st_size / 1024,
+            voice_provider["provider"], voice_provider["model"])
+
+        # ── 4b. TTS provider notification ─────────────────────────────
+        await _notify_tts_provider(settings, voice_provider)
 
         # ── 5. Render ──────────────────────────────────────────────────
         logger.info("[5/7] Rendering video with ffmpeg...")
