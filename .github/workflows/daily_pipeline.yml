@@ -65,7 +65,7 @@ jobs:
           token = os.environ['TELEGRAM_BOT_TOKEN']
           chat_id = os.environ['TELEGRAM_CHAT_ID']
           topic = '${{ github.event.inputs.topic }}' or 'auto'
-          msg = f'⏳ FitFacts pipeline started\nTopic: {topic}\nTime: $(date)'
+          msg = f'⏳ FitFacts pipeline started\nTopic: {topic}\nTime: $(TZ=Asia/Kolkata date "+%d %b %Y %I:%M %p IST")'
           url = f'https://api.telegram.org/bot{token}/sendMessage'
           data = json.dumps({'chat_id': chat_id, 'text': msg}).encode()
           req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
@@ -131,7 +131,7 @@ jobs:
           echo "=========================================="
           echo "Run ID: ${{ github.run_id }}"
           echo "Run #:  ${{ github.run_number }}"
-          echo "Time:   $(date)"
+          echo "Time:   $(TZ=Asia/Kolkata date "+%d %b %Y %I:%M %p IST")"
           echo "------------------------------------------"
           echo "Last 50 lines of pipeline log:"
           cat logs/pipeline_*.log 2>/dev/null | tail -50 || echo "No log file found"
@@ -170,7 +170,7 @@ jobs:
         run: |
           git config user.email "action@github.com"
           git config user.name "GitHub Action"
-          echo "Last run: $(date)" > .last_run
+          echo "Last run: $(TZ=Asia/Kolkata date "+%d %b %Y %I:%M %p IST")" > .last_run
           git add .last_run
           git diff --staged --quiet || git commit -m "chore: keep workflow active [skip ci]"
           git push || true

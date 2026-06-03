@@ -9,7 +9,13 @@ import sys
 import traceback
 import platform
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+def now_ist() -> datetime:
+    """Return current time in IST."""
+    return datetime.now(IST)
 from pathlib import Path
 from typing import Optional
 
@@ -177,7 +183,7 @@ async def run_pipeline(
             "audio_url": str(audio_path),
             "post_ids": post_ids,
             "dry_run": dry_run,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": now_ist().isoformat(),
         }
         tracker.complete_run(run_id, {
             "topic": selected_topic,
@@ -227,7 +233,7 @@ def main():
     # Enhanced logging setup
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
-    log_file = log_dir / f"pipeline_{datetime.utcnow().strftime('%Y%m%d')}.log"
+    log_file = log_dir / f"pipeline_{now_ist().strftime('%Y%m%d')}.log"
 
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
