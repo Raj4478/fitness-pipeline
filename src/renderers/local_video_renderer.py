@@ -148,16 +148,11 @@ class LocalVideoRenderer:
                 f":enable='between(t,0,{hook_dur:.2f})'"
             )
 
-        # ── Caption timing ─────────────────────────────────────────────
-        # Always use body_text (Roman Hinglish) directly for captions.
-        # Whisper transcribes Devanagari audio → returns Devanagari text
-        # which renders as boxes. body_text is always clean Roman script.
-        segments = self._transcribe_audio(audio)
-        captions = self._segments_to_caption_timing(
-            segments, hook_dur, voice_dur, body_text
-        )
-        logger.info("Caption timing: %d chunks (%s)",
-            len(captions), "Whisper-timed/Roman" if segments else "fallback/Roman")
+        # ── Caption timing — simple even distribution, no overlap ──────
+        # Uses body_text (Roman Hinglish) only — no Whisper needed.
+        # Each caption gets equal time slice — guaranteed no overlap.
+        captions = self._build_even_captions(body_text, hook_dur, voice_dur)
+        logger.info("Caption timing: %d chunks (even distribution)", len(captions))
 
         cap_y = int(TARGET_H * CAPTION_Y_POSITION)
         cap_line_h = CAPTION_FONT_SIZE + 12
@@ -445,6 +440,64 @@ class LocalVideoRenderer:
                 "end": min(voice_dur, cursor + dur),
             })
             cursor += dur
+        return captions
+
+    def _build_even_captions(
+        self, body_text: str, hook_dur: float, voice_dur: float
+    ) -> list[dict]:
+        """
+        Build captions with guaranteed no-overlap timing.
+        Simple approach: split body into chunks, divide time evenly.
+        Each caption ends exactly when next one starts.
+
+        Returns list of {text, start, end}.
+        """
+        import re
+
+        # Clean body text — remove any Devanagari characters
+        roman_text = re.sub(r'[ऀ-ॿ]+', '', body_text).strip()
+        roman_text = re.sub(r'\s+', ' ', roman_text)
+
+        if not roman_text:
+            roman_text = body_text  # fallback to original
+
+        # Split into sentences first
+        sentences = re.split(r'(?<=[.!?])\s+', roman_text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+
+        # Break long sentences into shorter chunks (max 7 words)
+        chunks = []
+        for sentence in sentences:
+            words = sentence.split()
+            if len(words) <= 7:
+                chunks.append(sentence)
+            else:
+                # Split into 6-word groups
+                for i in range(0, len(words), 6):
+                    chunk = " ".join(words[i:i+6])
+                    if chunk:
+                        chunks.append(chunk)
+
+        if not chunks:
+            return []
+
+        # Distribute evenly across available time
+        available = max(1.0, voice_dur - hook_dur)
+        chunk_dur = available / len(chunks)
+
+        captions = []
+        for i, chunk in enumerate(chunks):
+            t_start = hook_dur + i * chunk_dur
+            t_end = hook_dur + (i + 1) * chunk_dur  # exactly when next starts
+            t_end = min(t_end, voice_dur)
+
+            captions.append({
+                "text": chunk,
+                "start": round(t_start, 3),
+                "end": round(t_end, 3),
+            })
+
+        logger.debug("Built %d caption chunks, %.1fs each", len(chunks), chunk_dur)
         return captions
 
     def _caption_chunks(self, text: str) -> list[str]:
