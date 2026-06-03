@@ -50,9 +50,10 @@ class Settings(BaseSettings):
     elevenlabs_model_id: str = "eleven_flash_v2_5"  # 2x free credits + better Hindi
 
     def elevenlabs_api_keys(self) -> list[str]:
-        """Returns all configured ElevenLabs API keys in priority order."""
+        """Returns all configured ElevenLabs API keys in priority order.
+        Keys are stripped of whitespace/newlines to prevent header errors."""
         return [
-            k for k in [
+            k.strip() for k in [
                 self.elevenlabs_api_key,
                 self.elevenlabs_api_key_2,
                 self.elevenlabs_api_key_3,
