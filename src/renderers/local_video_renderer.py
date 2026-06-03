@@ -148,13 +148,16 @@ class LocalVideoRenderer:
                 f":enable='between(t,0,{hook_dur:.2f})'"
             )
 
-        # ── Whisper-synced captions ────────────────────────────────────
+        # ── Caption timing ─────────────────────────────────────────────
+        # Always use body_text (Roman Hinglish) directly for captions.
+        # Whisper transcribes Devanagari audio → returns Devanagari text
+        # which renders as boxes. body_text is always clean Roman script.
         segments = self._transcribe_audio(audio)
         captions = self._segments_to_caption_timing(
             segments, hook_dur, voice_dur, body_text
         )
         logger.info("Caption timing: %d chunks (%s)",
-            len(captions), "Whisper" if segments else "fallback")
+            len(captions), "Whisper-timed/Roman" if segments else "fallback/Roman")
 
         cap_y = int(TARGET_H * CAPTION_Y_POSITION)
         cap_line_h = CAPTION_FONT_SIZE + 12
@@ -317,32 +320,28 @@ class LocalVideoRenderer:
 
     def _find_font(self):
         """
-        Find a font that supports Hindi/Devanagari + Latin (Hinglish).
-        Priority: Noto Sans Devanagari > Mangal > fallback Latin fonts.
+        Find a Latin font for Roman Hinglish captions.
+        Captions use body text (Roman script) — no Devanagari needed.
+        Priority: Bold fonts first for better readability.
         """
         candidates = [
-            # Hindi-capable fonts — Windows
-            "C:/Windows/Fonts/NotoSansDevanagari-Bold.ttf",
-            "C:/Windows/Fonts/NotoSansDevanagari-Regular.ttf",
-            "C:/Windows/Fonts/mangal.ttf",       # Mangal — standard Hindi font on Windows
-            "C:/Windows/Fonts/aparaj.ttf",        # Aparajita — Windows Hindi font
-            "C:/Windows/Fonts/utsaah.ttf",        # Utsaah — Windows Hindi font
-            "C:/Windows/Fonts/kokila.ttf",        # Kokila — Windows Hindi font
-            # Hindi-capable fonts — Linux (GitHub Actions)
-            "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf",
-            "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
-            "/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf",
-            "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
-            # Latin fallback
+            # Windows bold fonts
             "C:/Windows/Fonts/arialbd.ttf",
+            "C:/Windows/Fonts/calibrib.ttf",
+            "C:/Windows/Fonts/verdanab.ttf",
             "C:/Windows/Fonts/arial.ttf",
+            "C:/Windows/Fonts/calibri.ttf",
+            # Linux (GitHub Actions)
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+            "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
         ]
         for f in candidates:
             if Path(f).exists():
                 logger.info("Using font: %s", f)
                 return f.replace("\\", "/").replace("C:/", "C\\:/")
-        raise RuntimeError("No Hindi-capable font found. Install Noto Sans Devanagari.")
+        raise RuntimeError("No font found.")
 
 
     def _transcribe_audio(self, audio_path: Path) -> list[dict]:
@@ -379,44 +378,53 @@ class LocalVideoRenderer:
         self, segments: list[dict], hook_dur: float,
         voice_dur: float, body_text: str
     ) -> list[dict]:
-        """Convert Whisper segments to synced caption chunks."""
+        """
+        Use Whisper segments for TIMING only.
+        Use body_text (Roman Hinglish) for CAPTION TEXT.
+        This gives perfectly synced Roman captions.
+        """
         if not segments:
             return self._fallback_timing(body_text, hook_dur, voice_dur)
 
+        # Get timestamps from Whisper segments (after hook)
+        valid_segs = [
+            s for s in segments
+            if float(s.get("end", 0)) > hook_dur
+        ]
+        if not valid_segs:
+            return self._fallback_timing(body_text, hook_dur, voice_dur)
+
+        # Split Roman body_text into chunks
+        roman_chunks = self._caption_chunks(body_text)
+        if not roman_chunks:
+            return self._fallback_timing(body_text, hook_dur, voice_dur)
+
+        # Map Roman chunks to Whisper time segments
+        total_segs = len(valid_segs)
+        total_chunks = len(roman_chunks)
         captions = []
-        current_words = []
-        current_start = None
-        current_end = None
 
-        for seg in segments:
-            seg_start = float(seg.get("start", 0))
-            seg_end = float(seg.get("end", 0))
-            seg_text = seg.get("text", "").strip()
-            if seg_end <= hook_dur:
-                continue
-            words = seg_text.split()
-            for word in words:
-                if current_start is None:
-                    current_start = max(seg_start, hook_dur)
-                current_end = seg_end
-                current_words.append(word)
-                if len(current_words) >= WORDS_PER_CAPTION:
-                    captions.append({
-                        "text": " ".join(current_words),
-                        "start": current_start,
-                        "end": current_end,
-                    })
-                    current_words = []
-                    current_start = None
+        for i, chunk in enumerate(roman_chunks):
+            # Map chunk index to segment proportionally
+            seg_idx = min(int(i * total_segs / total_chunks), total_segs - 1)
+            seg = valid_segs[seg_idx]
+            seg_start = float(seg.get("start", hook_dur))
+            seg_end = float(seg.get("end", voice_dur))
 
-        if current_words and current_start is not None:
+            # Smooth timing — divide segment evenly among chunks mapped to it
+            chunks_in_seg = max(1, round(total_chunks / total_segs))
+            chunk_pos = i % chunks_in_seg
+            chunk_dur = (seg_end - seg_start) / chunks_in_seg
+            t_start = max(hook_dur, seg_start + chunk_pos * chunk_dur)
+            t_end = min(voice_dur, t_start + chunk_dur)
+
             captions.append({
-                "text": " ".join(current_words),
-                "start": current_start,
-                "end": min(current_end or voice_dur, voice_dur),
+                "text": chunk,
+                "start": t_start,
+                "end": t_end,
             })
 
-        return captions if captions else self._fallback_timing(body_text, hook_dur, voice_dur)
+        return captions
 
     def _fallback_timing(
         self, body_text: str, hook_dur: float, voice_dur: float
