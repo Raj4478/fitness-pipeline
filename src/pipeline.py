@@ -67,6 +67,47 @@ def log_system_info():
     logger.info("=" * 60)
 
 
+async def _notify_tts_provider(settings, provider_info: dict):
+    """Send a separate Telegram notification about which TTS provider was used."""
+    import os
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_ALLOWED_USER_ID", "")
+    if not token or not chat_id:
+        return
+    try:
+        provider = provider_info.get("provider", "unknown")
+        model = provider_info.get("model", "unknown")
+        voice_id = provider_info.get("voice_id", "N/A")
+        key_idx = provider_info.get("key_index", "N/A")
+
+        if provider == "elevenlabs":
+            msg = (
+                f"🎙 TTS Provider: ElevenLabs\n"
+                f"   Model: {model}\n"
+                f"   Voice ID: ...{str(voice_id)[-6:]}\n"
+                f"   Key used: #{key_idx}"
+            )
+        else:
+            msg = (
+                f"⚠️ TTS Provider: gTTS Fallback\n"
+                f"   Model: {model}\n"
+                f"   Reason: All ElevenLabs keys exhausted\n"
+                f"   Action needed: Check/renew ElevenLabs API keys"
+            )
+
+        import urllib.request, json
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        data = json.dumps({"chat_id": chat_id, "text": msg}).encode()
+        req = urllib.request.Request(
+            url, data=data,
+            headers={"Content-Type": "application/json"}
+        )
+        urllib.request.urlopen(req, timeout=10)
+        logger.info("TTS provider notification sent")
+    except Exception as e:
+        logger.warning("TTS notification failed (non-critical): %s", e)
+
+
 async def run_pipeline(
     niche: str,
     topic: Optional[str] = None,
@@ -184,6 +225,7 @@ async def run_pipeline(
             "post_ids": post_ids,
             "dry_run": dry_run,
             "timestamp": now_ist().isoformat(),
+            "tts_provider": voice_provider,
         }
         tracker.complete_run(run_id, {
             "topic": selected_topic,

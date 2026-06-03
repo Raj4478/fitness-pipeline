@@ -63,11 +63,16 @@ class VoiceGenerator:
     def __init__(self, settings):
         self.settings = settings
 
-    async def generate(self, text: str, topic: Literal["fitness"] | str = "") -> Path:
+    async def generate(
+        self, text: str, topic: Literal["fitness"] | str = ""
+    ) -> tuple[Path, dict]:
         """
         Generate voiceover.
-        Cycles through all configured ElevenLabs API keys.
-        Falls back to Windows TTS if all keys are exhausted.
+        Returns (audio_path, provider_info) where provider_info contains:
+          - provider: "elevenlabs" or "gtts"
+          - model: model name used
+          - voice_id: voice ID used (ElevenLabs only)
+          - key_index: which key was used (ElevenLabs only)
         """
         configured_voice_id = self.settings.elevenlabs_voice_id.strip()
         if configured_voice_id:
@@ -81,8 +86,9 @@ class VoiceGenerator:
 
         api_keys = self.settings.elevenlabs_api_keys()
         if not api_keys:
-            logger.warning("No ElevenLabs API keys configured. Falling back to Windows TTS.")
-            return self._generate_windows_tts(text, audio_id)
+            logger.warning("No ElevenLabs API keys configured. Using gTTS fallback.")
+            path = self._generate_fallback_tts(text, audio_id)
+            return path, {"provider": "gtts", "model": "Google TTS (hi)", "voice_id": None, "key_index": None}
 
         last_error = None
         for idx, api_key in enumerate(api_keys, start=1):
@@ -92,7 +98,7 @@ class VoiceGenerator:
                     resp = await client.post(
                         f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
                         headers={
-                            "xi-api-key": api_key,
+                            "xi-api-key": api_key.strip(),
                             "Content-Type": "application/json",
                         },
                         json={
@@ -110,11 +116,18 @@ class VoiceGenerator:
 
                 audio_path.write_bytes(resp.content)
                 size_kb = audio_path.stat().st_size // 1024
+                provider_info = {
+                    "provider": "elevenlabs",
+                    "model": self.settings.elevenlabs_model_id,
+                    "voice_id": voice_id,
+                    "key_index": idx,
+                }
                 logger.info(
-                    "Audio saved: %s (%d KB) | key=%d voice=%s mood=%s",
-                    audio_path, size_kb, idx, voice_id, mood,
+                    "Audio saved: %s (%d KB) | key=%d voice=%s model=%s mood=%s",
+                    audio_path, size_kb, idx, voice_id,
+                    self.settings.elevenlabs_model_id, mood,
                 )
-                return audio_path
+                return audio_path, provider_info
 
             except httpx.HTTPStatusError as exc:
                 code = exc.response.status_code
@@ -127,12 +140,13 @@ class VoiceGenerator:
                     continue
                 raise
 
-        # All keys exhausted — fall back to Windows TTS
+        # All keys exhausted — fall back to gTTS
         logger.warning(
-            "All %d ElevenLabs keys exhausted. Falling back to local Windows TTS.",
+            "All %d ElevenLabs keys exhausted. Using gTTS fallback.",
             len(api_keys),
         )
-        return self._generate_windows_tts(text, audio_id)
+        path = self._generate_fallback_tts(text, audio_id)
+        return path, {"provider": "gtts", "model": "Google TTS (hi)", "voice_id": None, "key_index": None}
 
     def _generate_fallback_tts(self, text: str, audio_id: str) -> Path:
         """
