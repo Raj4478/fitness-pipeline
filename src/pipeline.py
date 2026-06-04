@@ -269,6 +269,27 @@ async def run_pipeline(
         else:
             logger.info("[6/7] ⏭️  Dry run — skipping publish")
 
+        # ── 5b. Generate 13-second short version ─────────────────────
+        logger.info("[5b] Generating 13-second version...")
+        try:
+            short_renderer = VideoRenderer(settings)
+            short_result = await short_renderer.render(
+                template_id="",
+                hook_text=script.hook,
+                body_text=script.short_narration or script.hook,
+                video_url=video_asset.url,
+                audio_url=str(audio_path),
+                topic=selected_topic,
+                subject=f"{selected_topic}_13sec",
+                target_duration=13.0,
+            )
+            logger.info("[5b] ✅ 13-sec video: %s", short_result.video_url)
+
+            # Upload 13-sec to YouTube separately
+            await _upload_short_version(settings, short_result, script, selected_topic)
+        except Exception as e:
+            logger.warning("[5b] 13-sec generation failed (non-critical): %s", e)
+
         # ── 6b. Generate carousel ─────────────────────────────────────
         logger.info("[6b] Generating Instagram carousel...")
         try:

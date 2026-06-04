@@ -99,10 +99,12 @@ class Script:
     body: str
     full_narration: str
     tts_text: str
-    caption: str
-    visual_query: str
-    niche: str
-    topic: str
+    short_narration: str = ""   # 13-sec version — hook only
+    short_tts: str = ""         # Devanagari TTS for 13-sec
+    caption: str = ""
+    visual_query: str = ""
+    niche: str = ""
+    topic: str = ""
 
     def build_caption(self, niche: str) -> str:
         return (

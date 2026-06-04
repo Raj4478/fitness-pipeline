@@ -57,7 +57,7 @@ class LocalVideoRenderer:
         logger.info("Using ffmpeg: %s", self._ffmpeg)
 
     async def render(self, template_id, hook_text, body_text, video_url, audio_url,
-                     bg_music_path=None, topic="", subject=""):
+                     bg_music_path=None, topic="", subject="", target_duration=None):
         return await asyncio.to_thread(
             self._render_sync,
             template_id,
@@ -78,7 +78,11 @@ class LocalVideoRenderer:
         footage = self._download_file(video_url, ".mp4", "footage")
         audio = self._resolve_audio(audio_url, rid)
         dur = self._get_duration(audio)
-        logger.info("[%s] Audio duration: %.1fs", rid, dur)
+        if target_duration and target_duration < dur:
+            dur = target_duration
+            logger.info("[%s] Duration capped to %.1fs (target)", rid, dur)
+        else:
+            logger.info("[%s] Audio duration: %.1fs", rid, dur)
 
         cropped = OUTPUT_DIR / f"crop_{rid}.mp4"
         self._crop(footage, cropped)
