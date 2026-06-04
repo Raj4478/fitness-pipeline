@@ -21,6 +21,7 @@ from typing import Optional
 
 from src.generators.script_generator import ScriptGenerator
 from src.generators.video_asset_fetcher import VideoAssetFetcher
+from src.generators.carousel_generator import CarouselGenerator
 from src.renderers.voice_generator import VoiceGenerator
 from src.renderers.local_video_renderer import LocalVideoRenderer as VideoRenderer
 from src.publishers.buffer_publisher import BufferPublisher
@@ -65,6 +66,47 @@ def log_system_info():
         else:
             logger.warning("  %-35s ❌ MISSING", key)
     logger.info("=" * 60)
+
+
+async def _notify_carousel(settings, carousel, topic: str):
+    """Send carousel slides to Telegram as a photo group."""
+    import os, urllib.request, json
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_ALLOWED_USER_ID", "")
+    if not token or not chat_id:
+        return
+    try:
+        base_url = f"https://api.telegram.org/bot{token}"
+
+        # Send header message
+        msg = f"🎠 Carousel ready for: {topic}
+{len(carousel.slides)} slides — post as Instagram carousel"
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"{base_url}/sendMessage",
+                data=json.dumps({"chat_id": chat_id, "text": msg}).encode(),
+                headers={"Content-Type": "application/json"}
+            ), timeout=10
+        )
+
+        # Send each slide as photo
+        for slide in carousel.slides:
+            if not slide.image_path.exists():
+                continue
+            import requests as req
+            with open(slide.image_path, "rb") as f:
+                resp = req.post(
+                    f"{base_url}/sendPhoto",
+                    data={"chat_id": chat_id, "caption": f"Slide {slide.slide_num}/{len(carousel.slides)}: {slide.headline}"},
+                    files={"photo": (slide.image_path.name, f, "image/png")},
+                    timeout=30,
+                )
+                if not resp.ok:
+                    logger.warning("Failed to send slide %d: %s", slide.slide_num, resp.text[:100])
+
+        logger.info("Carousel sent to Telegram: %d slides", len(carousel.slides))
+    except Exception as e:
+        logger.warning("Carousel Telegram notification failed: %s", e)
 
 
 async def _notify_tts_provider(settings, provider_info: dict):
@@ -214,6 +256,20 @@ async def run_pipeline(
                 logger.info("[6/7] ⏭️  Skipping publish — no public URL available")
         else:
             logger.info("[6/7] ⏭️  Dry run — skipping publish")
+
+        # ── 6b. Generate carousel ─────────────────────────────────────
+        logger.info("[6b] Generating Instagram carousel...")
+        try:
+            carousel_gen = CarouselGenerator(settings)
+            carousel = await carousel_gen.generate(
+                topic=selected_topic,
+                script_hook=script.hook,
+            )
+            logger.info("[6b] ✅ Carousel: %d slides in %s",
+                len(carousel.slides), carousel.output_dir)
+            await _notify_carousel(settings, carousel, selected_topic)
+        except Exception as e:
+            logger.warning("[6b] Carousel generation failed (non-critical): %s", e)
 
         # ── 7. Track ───────────────────────────────────────────────────
         logger.info("[7/7] Saving run record...")
