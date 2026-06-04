@@ -88,22 +88,35 @@ async def _notify_carousel(settings, carousel, topic: str):
             ), timeout=10
         )
 
+        import requests as req
+
         # Send each slide as photo
         for slide in carousel.slides:
             if not slide.image_path.exists():
                 continue
-            import requests as req
             with open(slide.image_path, "rb") as f:
                 resp = req.post(
                     f"{base_url}/sendPhoto",
-                    data={"chat_id": chat_id, "caption": f"Slide {slide.slide_num}/{len(carousel.slides)}: {slide.headline}"},
+                    data={"chat_id": chat_id,
+                          "caption": f"{'📌 COVER' if slide.slide_num == 1 else '📊 Slide ' + str(slide.slide_num)}/{len(carousel.slides)}: {slide.headline}"},
                     files={"photo": (slide.image_path.name, f, "image/png")},
                     timeout=30,
                 )
                 if not resp.ok:
                     logger.warning("Failed to send slide %d: %s", slide.slide_num, resp.text[:100])
 
-        logger.info("Carousel sent to Telegram: %d slides", len(carousel.slides))
+        # Send caption file
+        if carousel.caption_path.exists():
+            with open(carousel.caption_path, "rb") as f:
+                resp = req.post(
+                    f"{base_url}/sendDocument",
+                    data={"chat_id": chat_id,
+                          "caption": "📋 CAPTION.txt — copy-paste ready for Instagram"},
+                    files={"document": ("CAPTION.txt", f, "text/plain")},
+                    timeout=30,
+                )
+
+        logger.info("Carousel sent to Telegram: %d slides + caption file", len(carousel.slides))
     except Exception as e:
         logger.warning("Carousel Telegram notification failed: %s", e)
 
@@ -263,6 +276,7 @@ async def run_pipeline(
             carousel = await carousel_gen.generate(
                 topic=selected_topic,
                 script_hook=script.hook,
+                hashtags=script.build_caption(niche),
             )
             logger.info("[6b] ✅ Carousel: %d slides in %s",
                 len(carousel.slides), carousel.output_dir)
