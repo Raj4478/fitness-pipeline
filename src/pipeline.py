@@ -79,8 +79,7 @@ async def _notify_carousel(settings, carousel, topic: str):
         base_url = f"https://api.telegram.org/bot{token}"
 
         # Send header message
-        msg = f"🎠 Carousel ready for: {topic}
-{len(carousel.slides)} slides — post as Instagram carousel"
+        msg = f"🎠 Carousel ready for: {topic}\n{len(carousel.slides)} slides — post as Instagram carousel"
         urllib.request.urlopen(
             urllib.request.Request(
                 f"{base_url}/sendMessage",
