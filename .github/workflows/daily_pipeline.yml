@@ -113,6 +113,17 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
         run: python scripts/repurpose_for_shorts.py
 
+      - name: Generate thumbnail
+        if: success()
+        run: |
+          pip install Pillow -q
+          export VIDEO_PATH=$(ls tmp/videos/*.mp4 2>/dev/null | grep -v "13sec\|short" | head -1)
+          export VIDEO_HOOK=$(grep "hook=" logs/pipeline_*.log 2>/dev/null | tail -1 | sed 's/.*hook=//' | cut -c1-80)
+          export VIDEO_TOPIC=$(grep "Topic selected:" logs/pipeline_*.log 2>/dev/null | tail -1 | awk '{print $NF}')
+          if [ -n "$VIDEO_PATH" ]; then
+            python scripts/generate_thumbnail.py && echo "Thumbnail OK" || echo "Thumbnail failed (non-critical)"
+          fi
+
       - name: Upload to YouTube Shorts
         if: success()
         env:
@@ -165,36 +176,6 @@ jobs:
             tmp/videos/*.mp4
             tmp/shorts/*.mp4
           retention-days: 7
-
-      - name: Generate thumbnail & set on YouTube
-        if: success()
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-        run: |
-          export VIDEO_PATH=$(ls tmp/videos/*.mp4 2>/dev/null | head -1)
-          export VIDEO_HOOK=$(grep "hook=" logs/pipeline_*.log | tail -1 | sed 's/.*hook=//' | cut -c1-80)
-          export VIDEO_TOPIC=$(grep "Topic selected:" logs/pipeline_*.log | tail -1 | awk '{print $NF}')
-          python scripts/generate_thumbnail.py
-          echo "Thumbnail generated"
-
-      - name: Post pinned comment on YouTube
-        if: success()
-        env:
-          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
-          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
-          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-        run: |
-          export YOUTUBE_VIDEO_ID=$(grep "youtube.com/shorts" logs/pipeline_*.log | tail -1 | grep -oP '[A-Za-z0-9_-]{11}$' || echo "")
-          export VIDEO_TOPIC=$(grep "Topic selected:" logs/pipeline_*.log | tail -1 | awk '{print $NF}')
-          if [ -n "$YOUTUBE_VIDEO_ID" ]; then
-            python scripts/post_pinned_comment.py
-          else
-            echo "No video ID found — skipping pinned comment"
-          fi
 
       - name: Keep repo active
         run: |
