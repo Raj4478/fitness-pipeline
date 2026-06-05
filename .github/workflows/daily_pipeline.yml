@@ -2,11 +2,11 @@ name: Daily FitFacts Video Generator
 
 on:
   schedule:
-    # 7 AM IST = 1:30 AM UTC
-    - cron: '30 1 * * *'
-    # 1 PM IST = 7:30 AM UTC
-    - cron: '30 7 * * *'
-    # 9 PM IST = 3:30 PM UTC
+    # 6 AM IST = 12:30 AM UTC (pre-workout morning peak)
+    - cron: '30 0 * * *'
+    # 10 AM IST = 4:30 AM UTC (post-breakfast peak)
+    - cron: '30 4 * * *'
+    # 9 PM IST = 3:30 PM UTC (prime time evening peak)
     - cron: '30 15 * * *'
   workflow_dispatch:
     inputs:
@@ -165,6 +165,36 @@ jobs:
             tmp/videos/*.mp4
             tmp/shorts/*.mp4
           retention-days: 7
+
+      - name: Generate thumbnail & set on YouTube
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          export VIDEO_PATH=$(ls tmp/videos/*.mp4 2>/dev/null | head -1)
+          export VIDEO_HOOK=$(grep "hook=" logs/pipeline_*.log | tail -1 | sed 's/.*hook=//' | cut -c1-80)
+          export VIDEO_TOPIC=$(grep "Topic selected:" logs/pipeline_*.log | tail -1 | awk '{print $NF}')
+          python scripts/generate_thumbnail.py
+          echo "Thumbnail generated"
+
+      - name: Post pinned comment on YouTube
+        if: success()
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: |
+          export YOUTUBE_VIDEO_ID=$(grep "youtube.com/shorts" logs/pipeline_*.log | tail -1 | grep -oP '[A-Za-z0-9_-]{11}$' || echo "")
+          export VIDEO_TOPIC=$(grep "Topic selected:" logs/pipeline_*.log | tail -1 | awk '{print $NF}')
+          if [ -n "$YOUTUBE_VIDEO_ID" ]; then
+            python scripts/post_pinned_comment.py
+          else
+            echo "No video ID found — skipping pinned comment"
+          fi
 
       - name: Keep repo active
         run: |
