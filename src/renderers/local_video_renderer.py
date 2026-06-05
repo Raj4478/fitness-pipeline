@@ -68,10 +68,11 @@ class LocalVideoRenderer:
             bg_music_path,
             topic,
             subject,
+            target_duration,
         )
 
     def _render_sync(self, template_id, hook_text, body_text, video_url, audio_url,
-                     bg_music_path=None, topic="", subject=""):
+                     bg_music_path=None, topic="", subject="", target_duration=None):
         rid = uuid.uuid4().hex[:10]
         logger.info("LocalRenderer [%s] starting render", rid)
 
