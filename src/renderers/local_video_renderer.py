@@ -130,25 +130,31 @@ class LocalVideoRenderer:
         font = self._find_font()
         filters = []
 
-        # ── Captions ───────────────────────────────────────────────────
-        hook_dur = min(4.0, voice_dur * 0.15)
-        hook_clean = self._clean(hook_text)
-        hook_lines = textwrap.wrap(hook_text, width=22) or [hook_text]
-        hook_line_h = HOOK_FONT_SIZE + 10
-        hook_box_h = len(hook_lines) * hook_line_h + 30
-        hook_box_y = int(TARGET_H * HOOK_Y_POSITION)
-        hook_text_y = hook_box_y + 15
+        # ── Hook — FULL SCREEN prominent, visible from FRAME 1 ──────────
+        # Critical: shows text before sound kicks in (sound-off viewers)
+        hook_dur = min(5.0, voice_dur * 0.40)
+        hook_lines = textwrap.wrap(hook_text, width=18) or [hook_text]
+        hook_line_h = HOOK_FONT_SIZE + 16
+        hook_total_h = len(hook_lines) * hook_line_h + 50
+        hook_box_y = TARGET_H // 2 - hook_total_h // 2 - 80
 
+        # Full-width dark box CENTER of screen
         filters.append(
-            f"drawbox=x=40:y={hook_box_y}:w={TARGET_W-80}:h={hook_box_h}"
-            f":color=black@0.6:t=fill:enable='between(t,0,{hook_dur:.2f})'"
+            f"drawbox=x=0:y={hook_box_y - 20}:w={TARGET_W}:h={hook_total_h + 40}"
+            f":color=black@0.78:t=fill:enable='between(t,0,{hook_dur:.2f})'"
         )
+        # Yellow left accent strip
+        filters.append(
+            f"drawbox=x=0:y={hook_box_y - 20}:w=14:h={hook_total_h + 40}"
+            f":color=#FFE234@1:t=fill:enable='between(t,0,{hook_dur:.2f})'"
+        )
+        hook_text_y = hook_box_y + 15
         for i, line in enumerate(hook_lines):
             y = hook_text_y + i * hook_line_h
             filters.append(
                 f"drawtext=fontfile='{font}':text='{self._clean(line)}'"
                 f":fontsize={HOOK_FONT_SIZE}:fontcolor=#FFE234"
-                f":borderw=2:bordercolor=black@0.8"
+                f":borderw=3:bordercolor=black"
                 f":x=(w-text_w)/2:y={y}"
                 f":enable='between(t,0,{hook_dur:.2f})'"
             )
@@ -184,6 +190,43 @@ class LocalVideoRenderer:
                     f":x=(w-text_w)/2:y={y}"
                     f":enable='{enable}'"
                 )
+
+        # ── Loop trigger — last 1.5 seconds shows hook again (drives replays) ──
+        loop_start = max(0, voice_dur - 1.5)
+        loop_enable = f"between(t,{loop_start:.2f},{voice_dur:.2f})"
+        loop_lines = textwrap.wrap(hook_text, width=22) or [hook_text]
+        loop_y = TARGET_H // 2 - 60
+        filters.append(
+            f"drawbox=x=0:y={loop_y - 20}:w={TARGET_W}:h={len(loop_lines) * 70 + 40}"
+            f":color=black@0.7:t=fill:enable='{loop_enable}'"
+        )
+        for i, line in enumerate(loop_lines):
+            filters.append(
+                f"drawtext=fontfile='{font}':text='{self._clean(line)}'"
+                f":fontsize=54:fontcolor=white"
+                f":borderw=3:bordercolor=black"
+                f":x=(w-text_w)/2:y={loop_y + i * 68}"
+                f":enable='{loop_enable}'"
+            )
+
+        # ── Loop trigger — last 1.5s shows hook again (drives replays) ────
+        loop_start = max(0, voice_dur - 1.5)
+        loop_lines = textwrap.wrap(hook_text, width=22) or [hook_text]
+        loop_enable = f"between(t,{loop_start:.2f},{voice_dur:.2f})"
+        loop_box_h = len(loop_lines) * 72 + 40
+        loop_box_y = TARGET_H // 2 - loop_box_h // 2
+        filters.append(
+            f"drawbox=x=0:y={loop_box_y}:w={TARGET_W}:h={loop_box_h}"
+            f":color=black@0.75:t=fill:enable='{loop_enable}'"
+        )
+        for i, line in enumerate(loop_lines):
+            filters.append(
+                f"drawtext=fontfile='{font}':text='{self._clean(line)}'"
+                f":fontsize=54:fontcolor=white"
+                f":borderw=3:bordercolor=black"
+                f":x=(w-text_w)/2:y={loop_box_y + 20 + i * 70}"
+                f":enable='{loop_enable}'"
+            )
 
         # ── Outro card (last OUTRO_DURATION seconds) ───────────────────
         outro_start = voice_dur

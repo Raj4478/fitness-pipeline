@@ -91,6 +91,12 @@ def get_hook_from_logs() -> str:
 
 
 def build_title_from_hook(hook: str, topic: str) -> str:
+    """
+    Build YouTube title optimized for CTR.
+    - Keyword first (for search)
+    - Number/stat in title (proven +20% CTR)
+    - Max 60 chars
+    """
     """Build YouTube title from hook + topic tags."""
     if not hook:
         return DEFAULT_YT_DATA["title"]

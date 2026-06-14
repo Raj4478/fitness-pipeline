@@ -41,7 +41,7 @@ STRICT RULES:
 - Explain the mechanism: WHY does this happen in the body — in 1 simple sentence
 - End with a specific actionable insight — not generic advice
 - Hook must have a NUMBER or specific claim — never vague
-- Total narration: 100-130 words
+- Total narration: 35-45 words ONLY (15 second video — every word counts)
 - Captions: short punchy sentences, easy to read on screen
 - Language: casual Hinglish — "Yaar", "sun", "soch", "dekho", "actually"
 - tts_text in Devanagari Hindi/Hinglish for proper TTS pronunciation
@@ -84,7 +84,7 @@ RESPONSE_SCHEMA = """
   "hook": "shocking opening line, max 12 words, Roman Hinglish",
   "body": "caption-friendly Roman Hinglish narration with 4-6 short sentences",
   "full_narration": "complete hook + body in the same caption-friendly Roman Hinglish",
-  "tts_text": "complete 90-120 word voiceover, same meaning as full_narration, written in Devanagari Hindi/Hinglish for better TTS pronunciation",
+  "tts_text": "complete 35-45 word voiceover, same meaning as full_narration, written in Devanagari Hindi/Hinglish for better TTS pronunciation",
   "caption": "Instagram caption with 3 relevant hashtags",
   "visual_query": "3-word English stock video search term for fitness B-roll"
 }
