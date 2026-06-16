@@ -1,0 +1,46 @@
+name: Label All Videos as AI Content
+
+on:
+  workflow_dispatch:
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install google-auth-oauthlib google-api-python-client -q
+
+      - name: Label all videos as AI content
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: python scripts/label_ai_content.py
+
+      - name: Notify Telegram
+        if: always()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
+        run: |
+          python3 -c "
+          import urllib.request, json, os
+          token = os.environ['TELEGRAM_BOT_TOKEN']
+          chat_id = os.environ['TELEGRAM_ALLOWED_USER_ID']
+          msg = '✅ All YouTube videos labeled as AI content!'
+          url = f'https://api.telegram.org/bot{token}/sendMessage'
+          data = json.dumps({'chat_id': chat_id, 'text': msg}).encode()
+          req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+          urllib.request.urlopen(req)
+          "
