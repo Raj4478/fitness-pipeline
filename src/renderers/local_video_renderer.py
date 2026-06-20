@@ -21,7 +21,7 @@ CAPTION_Y_POSITION = 0.72
 HOOK_Y_POSITION = 0.10
 WORDS_PER_CAPTION = 5
 BG_MUSIC_VOLUME = 0.08
-OUTRO_DURATION = 3.0
+OUTRO_DURATION = 1.3
 
 # Topic → music mood map
 TOPIC_MUSIC_MAP = {
@@ -159,11 +159,18 @@ class LocalVideoRenderer:
                 f":enable='between(t,0,{hook_dur:.2f})'"
             )
 
-        # ── Caption timing — simple even distribution, no overlap ──────
-        # Uses body_text (Roman Hinglish) only — no Whisper needed.
-        # Each caption gets equal time slice — guaranteed no overlap.
-        captions = self._build_even_captions(body_text, hook_dur, voice_dur)
-        logger.info("Caption timing: %d chunks (even distribution)", len(captions))
+        # ── Caption timing — Whisper-synced when available ──────────────
+        # Uses body_text (Roman Hinglish) for the on-screen text, but times
+        # each chunk against actual transcribed speech segments instead of
+        # an even time-slice, so captions don't drift from the spoken audio
+        # on longer or unevenly-paced narration.
+        segments = self._transcribe_audio(audio)
+        if segments:
+            captions = self._segments_to_caption_timing(segments, hook_dur, voice_dur, body_text)
+            logger.info("Caption timing: %d chunks (Whisper-synced)", len(captions))
+        else:
+            captions = self._build_even_captions(body_text, hook_dur, voice_dur)
+            logger.info("Caption timing: %d chunks (even distribution fallback)", len(captions))
 
         cap_y = int(TARGET_H * CAPTION_Y_POSITION)
         cap_line_h = CAPTION_FONT_SIZE + 12
@@ -229,13 +236,15 @@ class LocalVideoRenderer:
             )
 
         # ── Outro card (last OUTRO_DURATION seconds) ───────────────────
+        # Translucent overlay over STILL-PLAYING footage (not a full black
+        # cut to dead air) — keeps motion on screen during the CTA so the
+        # watch-through percentage isn't spent on a static frame.
         outro_start = voice_dur
         outro_enable = f"between(t,{outro_start:.2f},{total_dur:.2f})"
 
-        # Full black overlay for outro
         filters.append(
             f"drawbox=x=0:y=0:w={TARGET_W}:h={TARGET_H}"
-            f":color=black@0.88:t=fill:enable='{outro_enable}'"
+            f":color=black@0.55:t=fill:enable='{outro_enable}'"
         )
         # Text branding below logo
         outro_texts = [
