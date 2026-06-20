@@ -476,7 +476,37 @@ class LocalVideoRenderer:
                 "end": t_end,
             })
 
-        return captions
+        # The proportional seg_idx/chunk_pos mapping above has no built-in
+        # guarantee against overlap — chunk_pos cycles by global chunk
+        # index, not by position within its mapped segment, so it drifts
+        # out of sync whenever Whisper segment durations are uneven (which
+        # real transcription output always has). Enforce a hard invariant
+        # afterward: captions must be strictly chronological with no
+        # overlap, same guarantee _build_even_captions provides.
+        return self._enforce_monotonic(captions, hook_dur, voice_dur)
+
+    def _enforce_monotonic(
+        self, captions: list[dict], hook_dur: float, voice_dur: float,
+        min_duration: float = 0.15,
+    ) -> list[dict]:
+        """Clamp a caption list so each entry starts no earlier than the
+        previous one ends, guaranteeing no visual overlap regardless of
+        how the upstream timing was computed. Never moves a start time
+        backward to 'rescue' a caption that has no room left — that would
+        violate the very invariant this exists to enforce. Captions that
+        don't fit are dropped instead."""
+        fixed = []
+        prev_end = hook_dur
+        for cap in captions:
+            start = max(cap["start"], prev_end)
+            if start >= voice_dur:
+                break  # no room left for this or any later caption
+            end = min(voice_dur, max(start + min_duration, cap["end"]))
+            if end <= start:
+                continue  # no room for this one specifically — skip it
+            fixed.append({"text": cap["text"], "start": start, "end": end})
+            prev_end = end
+        return fixed
 
     def _fallback_timing(
         self, body_text: str, hook_dur: float, voice_dur: float
