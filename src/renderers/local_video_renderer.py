@@ -159,65 +159,17 @@ class LocalVideoRenderer:
                 f":enable='between(t,0,{hook_dur:.2f})'"
             )
 
-        # ── Caption timing — Whisper-synced when available ──────────────
-        # Uses body_text (Roman Hinglish) for the on-screen text, but times
-        # each chunk against actual transcribed speech segments instead of
-        # an even time-slice, so captions don't drift from the spoken audio
-        # on longer or unevenly-paced narration.
-        segments = self._transcribe_audio(audio)
-        if segments:
-            captions = self._segments_to_caption_timing(segments, hook_dur, voice_dur, body_text)
-            logger.info("Caption timing: %d chunks (Whisper-synced)", len(captions))
-        else:
-            captions = self._build_even_captions(body_text, hook_dur, voice_dur)
-            logger.info("Caption timing: %d chunks (even distribution fallback)", len(captions))
-
-        cap_y = int(TARGET_H * CAPTION_Y_POSITION)
-        cap_line_h = CAPTION_FONT_SIZE + 12
-
-        for cap in captions:
-            ts = cap["start"]
-            te = cap["end"]
-            chunk = cap["text"]
-            enable = f"between(t,{ts:.3f},{te:.3f})"
-            lines = textwrap.wrap(chunk, width=24) or [chunk]
-            box_h = len(lines) * cap_line_h + 40
-            box_y = cap_y - 20
-
-            filters.append(
-                f"drawbox=x=30:y={box_y}:w={TARGET_W-60}:h={box_h}"
-                f":color=black@0.6:t=fill:enable='{enable}'"
-            )
-            for j, line in enumerate(lines):
-                y = cap_y + j * cap_line_h
-                filters.append(
-                    f"drawtext=fontfile='{font}':text='{self._clean(line)}'"
-                    f":fontsize={CAPTION_FONT_SIZE}:fontcolor=white"
-                    f":borderw=2:bordercolor=black@0.9"
-                    f":x=(w-text_w)/2:y={y}"
-                    f":enable='{enable}'"
-                )
-
-        # ── Loop trigger — last 1.5 seconds shows hook again (drives replays) ──
-        loop_start = max(0, voice_dur - 1.5)
-        loop_enable = f"between(t,{loop_start:.2f},{voice_dur:.2f})"
-        loop_lines = textwrap.wrap(hook_text, width=22) or [hook_text]
-        loop_y = TARGET_H // 2 - 60
-        filters.append(
-            f"drawbox=x=0:y={loop_y - 20}:w={TARGET_W}:h={len(loop_lines) * 70 + 40}"
-            f":color=black@0.7:t=fill:enable='{loop_enable}'"
-        )
-        for i, line in enumerate(loop_lines):
-            filters.append(
-                f"drawtext=fontfile='{font}':text='{self._clean(line)}'"
-                f":fontsize=54:fontcolor=white"
-                f":borderw=3:bordercolor=black"
-                f":x=(w-text_w)/2:y={loop_y + i * 68}"
-                f":enable='{loop_enable}'"
-            )
+        # ── Body captions — REMOVED per request ──────────────────────────
+        # Only the hook (above) and the loop-trigger reshow (below) are
+        # drawn now; no per-sentence caption track during the body.
 
         # ── Loop trigger — last 1.5s shows hook again (drives replays) ────
-        loop_start = max(0, voice_dur - 1.5)
+        # NOTE: this used to be duplicated as two near-identical blocks
+        # stacked on top of each other (same time window, slightly
+        # different box math) — that was drawing two overlapping
+        # black boxes + two slightly misaligned copies of the hook text
+        # simultaneously during the last 1.5s of every video. Removed
+        # the duplicate; this is the single remaining copy.
         loop_lines = textwrap.wrap(hook_text, width=22) or [hook_text]
         loop_enable = f"between(t,{loop_start:.2f},{voice_dur:.2f})"
         loop_box_h = len(loop_lines) * 72 + 40
