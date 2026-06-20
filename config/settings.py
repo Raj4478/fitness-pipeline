@@ -7,7 +7,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -67,8 +67,16 @@ class Settings(BaseSettings):
 
     # ── Buffer ────────────────────────────────────────────────────────
     buffer_access_token: str = Field(default="", description="Buffer access token")
-    buffer_channels: list[str] = Field(
-        default_factory=list,
+    # NOTE: kept as a plain str, not list[str]. pydantic-settings treats
+    # list[str] as a "complex" type and tries json.loads() on the raw env
+    # string at the settings-source layer, BEFORE any field_validator runs
+    # — so a comma-separated value like "id_1,id_2" (or an empty string
+    # from an unset secret) would crash with a JSONDecodeError before our
+    # own parsing ever got a chance to run. Splitting it ourselves via the
+    # property below sidesteps that entirely.
+    buffer_channels_raw: str = Field(
+        default="",
+        alias="BUFFER_CHANNELS",
         description="Comma-separated Buffer channel IDs",
     )
 
@@ -86,12 +94,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     environment: Literal["development", "production"] = "development"
 
-    @field_validator("buffer_channels", mode="before")
-    @classmethod
-    def parse_channels(cls, v):
-        if isinstance(v, str):
-            return [c.strip() for c in v.split(",") if c.strip()]
-        return v
+    @property
+    def buffer_channels(self) -> list[str]:
+        return [c.strip() for c in self.buffer_channels_raw.split(",") if c.strip()]
 
     @cached_property
     def is_production(self) -> bool:
