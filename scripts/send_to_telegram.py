@@ -277,8 +277,11 @@ async def main():
         logger.error("No tmp/videos directory found")
         return
 
+    # Exclude 13sec/short variant files — only the main video should ever
+    # be picked here, even if the short-form render is re-enabled later.
     videos = sorted(
-        videos_dir.glob("*.mp4"),
+        (f for f in videos_dir.glob("*.mp4")
+         if "13sec" not in f.stem and "short" not in f.stem),
         key=lambda f: f.stat().st_mtime,
         reverse=True
     )
