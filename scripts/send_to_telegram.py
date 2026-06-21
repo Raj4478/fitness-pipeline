@@ -7,6 +7,7 @@ Called by GitHub Actions after pipeline completes.
 import asyncio
 import logging
 import os
+import subprocess
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
@@ -190,6 +191,65 @@ DEFAULT_CAPTION = (
     "Follow @fitfacts.india for daily facts 💪"
 )
 
+# Telegram's Bot API hard-rejects uploads over 50MB with a 413. The
+# renderer now caps encode bitrate to stay well under this, but this is a
+# safety net in case a future change (longer scripts, more clips, a
+# setting tweak) lets something slip through anyway -- better to
+# compress and still deliver the video than crash the whole CI run.
+TELEGRAM_MAX_BYTES = 48 * 1024 * 1024  # 48MB, leaving margin under the 50MB cap
+
+
+def _compress_for_telegram(video_path: Path) -> Path:
+    """If video_path is over Telegram's bot upload limit, re-encode it down
+    to a bitrate that fits comfortably under the cap, sized to the video's
+    actual duration. Returns the original path unchanged if it's already
+    under the limit, or if compression itself fails for some reason (in
+    which case the original send attempt will still run and fail with a
+    clear 413 rather than this function silently eating the video)."""
+    size = video_path.stat().st_size
+    if size <= TELEGRAM_MAX_BYTES:
+        return video_path
+
+    logger.warning(
+        "Video is %.1fMB, over Telegram's ~50MB bot upload limit — compressing before send",
+        size / 1024 / 1024,
+    )
+
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(video_path)],
+        capture_output=True, text=True,
+    )
+    try:
+        duration = float(probe.stdout.strip())
+    except ValueError:
+        duration = 60.0  # conservative fallback if probing the duration fails
+
+    # Target ~40MB total (comfortable margin under the 48MB threshold
+    # above), minus audio overhead, spread across the actual duration.
+    target_total_bits = 40 * 1024 * 1024 * 8
+    audio_bits = int(128_000 * duration)
+    video_bitrate = max(800_000, int((target_total_bits - audio_bits) / duration))
+
+    compressed_path = video_path.with_name(video_path.stem + "_compressed.mp4")
+    result = subprocess.run(
+        ["ffmpeg", "-y", "-i", str(video_path),
+         "-c:v", "libx264", "-preset", "fast",
+         "-b:v", str(video_bitrate),
+         "-maxrate", str(int(video_bitrate * 1.2)),
+         "-bufsize", str(int(video_bitrate * 2)),
+         "-c:a", "aac", "-b:a", "128k",
+         str(compressed_path)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not compressed_path.exists():
+        logger.error("Compression fallback failed (%s) — sending original, expect a 413", result.stderr[-500:])
+        return video_path
+
+    new_size = compressed_path.stat().st_size
+    logger.info("Compressed %.1fMB -> %.1fMB for Telegram delivery", size / 1024 / 1024, new_size / 1024 / 1024)
+    return compressed_path
+
 
 async def send_video_to_telegram(video_path: Path, caption: str, hashtags: str):
     from telegram import Bot
@@ -209,19 +269,21 @@ async def send_video_to_telegram(video_path: Path, caption: str, hashtags: str):
 
     logger.info("Sending video to Telegram: %s", video_path.name)
 
+    send_path = _compress_for_telegram(video_path)
+
     async with bot:
         # Notification
         await bot.send_message(
             chat_id=chat_id,
             text=f"🎬 *New FitFacts Video Ready!*\n\n"
-                 f"📁 `{video_path.name}`\n"
-                 f"📊 Size: {video_path.stat().st_size // 1024}KB\n\n"
+                 f"📁 `{send_path.name}`\n"
+                 f"📊 Size: {send_path.stat().st_size // 1024}KB\n\n"
                  f"Sending video now...",
             parse_mode=None
         )
 
         # Send video
-        with open(video_path, "rb") as vf:
+        with open(send_path, "rb") as vf:
             await bot.send_video(
                 chat_id=chat_id,
                 video=vf,
