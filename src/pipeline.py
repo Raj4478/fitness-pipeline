@@ -190,14 +190,18 @@ async def run_pipeline(
         logger.info("[2/7] ✅ Script generated | hook=%s", script.hook[:60])
         logger.info("       body preview: %s...", script.body[:80])
 
-        # ── 3. Video asset ─────────────────────────────────────────────
-        logger.info("[3/7] Fetching Pexels footage...")
+        # ── 3. Video assets — multiple distinct clips, not one looped clip ──
+        logger.info("[3/7] Fetching Pexels footage (multi-clip)...")
         fetcher = VideoAssetFetcher(settings)
-        video_asset = await fetcher.fetch(
+        video_assets = await fetcher.fetch_multi(
             topic=selected_topic,
-            visual_query=script.visual_query
+            visual_queries=script.visual_queries,
+            count=4,
         )
-        logger.info("[3/7] ✅ Footage: %s", video_asset.url)
+        logger.info(
+            "[3/7] ✅ Footage: %d clip(s): %s",
+            len(video_assets), ", ".join(a.url for a in video_assets),
+        )
 
         # ── 4. Voiceover ───────────────────────────────────────────────
         logger.info("[4/7] Generating voiceover via ElevenLabs...")
@@ -220,7 +224,8 @@ async def run_pipeline(
             template_id="",
             hook_text=script.hook,
             body_text=script.body,
-            video_url=video_asset.url,
+            video_url=video_assets[0].url,
+            video_urls=[a.url for a in video_assets],
             audio_url=str(audio_path),
             topic=selected_topic,
             subject=selected_topic,
@@ -269,6 +274,7 @@ async def run_pipeline(
         else:
             logger.info("[6/7] ⏭️  Dry run — skipping publish")
 
+        # ── 5b. 13-second short version — DISABLED ────────────────────
         # ── 5b. 13-second short version — DISABLED ────────────────────
         # This used to call _upload_short_version(), which was never
         # defined anywhere in the codebase, so this step has silently

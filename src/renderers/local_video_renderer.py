@@ -57,7 +57,8 @@ class LocalVideoRenderer:
         logger.info("Using ffmpeg: %s", self._ffmpeg)
 
     async def render(self, template_id, hook_text, body_text, video_url, audio_url,
-                     bg_music_path=None, topic="", subject="", target_duration=None):
+                     bg_music_path=None, topic="", subject="", target_duration=None,
+                     video_urls=None):
         return await asyncio.to_thread(
             self._render_sync,
             template_id,
@@ -69,14 +70,15 @@ class LocalVideoRenderer:
             topic,
             subject,
             target_duration,
+            video_urls,
         )
 
     def _render_sync(self, template_id, hook_text, body_text, video_url, audio_url,
-                     bg_music_path=None, topic="", subject="", target_duration=None):
+                     bg_music_path=None, topic="", subject="", target_duration=None,
+                     video_urls=None):
         rid = uuid.uuid4().hex[:10]
         logger.info("LocalRenderer [%s] starting render", rid)
 
-        footage = self._download_file(video_url, ".mp4", "footage")
         audio = self._resolve_audio(audio_url, rid)
         dur = self._get_duration(audio)
         if target_duration and target_duration < dur:
@@ -85,14 +87,31 @@ class LocalVideoRenderer:
         else:
             logger.info("[%s] Audio duration: %.1fs", rid, dur)
 
-        cropped = OUTPUT_DIR / f"crop_{rid}.mp4"
-        self._crop(footage, cropped)
-        logger.info("[%s] Cropped to vertical", rid)
-
         total_dur = dur + OUTRO_DURATION
-        looped = OUTPUT_DIR / f"loop_{rid}.mp4"
-        self._loop(cropped, looped, total_dur)
-        logger.info("[%s] Looped footage %.1fs", rid, total_dur)
+        urls = list(video_urls) if video_urls else ([video_url] if video_url else [])
+        if not urls:
+            raise ValueError(f"[{rid}] render() requires either video_url or video_urls")
+
+        footage = cropped = None
+        if len(urls) > 1:
+            try:
+                looped = self._build_multi_clip_footage(urls, rid, total_dur)
+                logger.info("[%s] Multi-clip footage built: %d clips, %.1fs", rid, len(urls), total_dur)
+            except Exception as e:
+                logger.warning(
+                    "[%s] Multi-clip footage build failed (%s) — falling back to single clip", rid, e
+                )
+                urls = urls[:1]
+
+        if len(urls) == 1:
+            footage = self._download_file(urls[0], ".mp4", "footage")
+            cropped = OUTPUT_DIR / f"crop_{rid}.mp4"
+            self._crop(footage, cropped)
+            logger.info("[%s] Cropped to vertical", rid)
+
+            looped = OUTPUT_DIR / f"loop_{rid}.mp4"
+            self._loop(cropped, looped, total_dur)
+            logger.info("[%s] Looped footage %.1fs", rid, total_dur)
 
         # Find background music
         music_path = bg_music_path or self._find_music(topic)
@@ -105,10 +124,80 @@ class LocalVideoRenderer:
         self._burn_all(looped, audio, hook_text, body_text, dur, total_dur, music_path, out)
         logger.info("[%s] Render complete: %s", rid, out)
 
-        self._cleanup([footage, cropped, looped])
+        self._cleanup([f for f in [footage, cropped, looped] if f])
         return RenderResult(rid, str(out), TARGET_W, TARGET_H, total_dur)
 
     # ── ffmpeg core ops ────────────────────────────────────────────────
+
+    def _build_multi_clip_footage(self, video_urls: list[str], rid: str, total_dur: float) -> Path:
+        """Download, crop, and time-slice multiple B-roll clips into one
+        continuous file with hard cuts between them, instead of looping a
+        single clip for the whole video. Each surviving clip gets an
+        equal-length slot (total_dur / N, last slot absorbs rounding),
+        looped or trimmed to fill it exactly via the existing _loop()
+        helper, then all slots are concatenated via ffmpeg's concat
+        demuxer (fast stream copy — safe here because every slot went
+        through the same _crop() call, so codec/resolution/pixel format
+        are already identical across all of them).
+
+        Any individual clip that fails to download or crop is skipped
+        with a warning; the remaining clips absorb its slot time instead
+        of failing the whole render. Raises only if every clip fails,
+        so the caller can fall back to the single-clip path.
+        """
+        n_requested = len(video_urls)
+        cropped_files: list[Path] = []
+        temp_files: list[Path] = []
+
+        for i, url in enumerate(video_urls):
+            try:
+                raw = self._download_file(url, ".mp4", f"footage{i}_{rid}")
+                temp_files.append(raw)
+                cropped = OUTPUT_DIR / f"crop{i}_{rid}.mp4"
+                self._crop(raw, cropped)
+                temp_files.append(cropped)
+                cropped_files.append(cropped)
+            except Exception as e:
+                logger.warning(
+                    "[%s] Clip %d/%d failed download/crop (%s) — skipping, "
+                    "remaining clips absorb its slot time",
+                    rid, i + 1, n_requested, e,
+                )
+
+        if not cropped_files:
+            self._cleanup(temp_files)
+            raise RuntimeError(f"[{rid}] All {n_requested} clips failed download/crop")
+
+        n = len(cropped_files)
+        nominal_slot = total_dur / n
+        slot_files: list[Path] = []
+        consumed = 0.0
+        for i, cropped in enumerate(cropped_files):
+            # Last surviving slot absorbs whatever remains, so the sum of
+            # slot durations always equals total_dur exactly regardless of
+            # how many clips were skipped above.
+            slot_dur = (total_dur - consumed) if i == n - 1 else nominal_slot
+            slot_dur = max(0.5, round(slot_dur, 2))
+            slot = OUTPUT_DIR / f"slot{i}_{rid}.mp4"
+            self._loop(cropped, slot, slot_dur)
+            temp_files.append(slot)
+            slot_files.append(slot)
+            consumed += slot_dur
+
+        concat_list = OUTPUT_DIR / f"concat_{rid}.txt"
+        concat_list.write_text(
+            "\n".join(f"file '{f.resolve()}'" for f in slot_files)
+        )
+        temp_files.append(concat_list)
+
+        final = OUTPUT_DIR / f"multiclip_{rid}.mp4"
+        self._ff([
+            "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
+            "-c", "copy", str(final),
+        ])
+
+        self._cleanup(temp_files)
+        return final
 
     def _crop(self, src, dst):
         vf = (f"crop='if(gt(iw/ih,9/16),ih*9/16,iw)':'if(gt(iw/ih,9/16),ih,iw*16/9)',"
@@ -159,64 +248,17 @@ class LocalVideoRenderer:
                 f":enable='between(t,0,{hook_dur:.2f})'"
             )
 
-        # ── Caption timing — Whisper-synced when available ──────────────
-        # Uses body_text (Roman Hinglish) for the on-screen text, but times
-        # each chunk against actual transcribed speech segments instead of
-        # an even time-slice, so captions don't drift from the spoken audio
-        # on longer or unevenly-paced narration.
-        segments = self._transcribe_audio(audio)
-        if segments:
-            captions = self._segments_to_caption_timing(segments, hook_dur, voice_dur, body_text)
-            logger.info("Caption timing: %d chunks (Whisper-synced)", len(captions))
-        else:
-            captions = self._build_even_captions(body_text, hook_dur, voice_dur)
-            logger.info("Caption timing: %d chunks (even distribution fallback)", len(captions))
-
-        cap_y = int(TARGET_H * CAPTION_Y_POSITION)
-        cap_line_h = CAPTION_FONT_SIZE + 12
-
-        for cap in captions:
-            ts = cap["start"]
-            te = cap["end"]
-            chunk = cap["text"]
-            enable = f"between(t,{ts:.3f},{te:.3f})"
-            lines = textwrap.wrap(chunk, width=24) or [chunk]
-            box_h = len(lines) * cap_line_h + 40
-            box_y = cap_y - 20
-
-            filters.append(
-                f"drawbox=x=30:y={box_y}:w={TARGET_W-60}:h={box_h}"
-                f":color=black@0.6:t=fill:enable='{enable}'"
-            )
-            for j, line in enumerate(lines):
-                y = cap_y + j * cap_line_h
-                filters.append(
-                    f"drawtext=fontfile='{font}':text='{self._clean(line)}'"
-                    f":fontsize={CAPTION_FONT_SIZE}:fontcolor=white"
-                    f":borderw=2:bordercolor=black@0.9"
-                    f":x=(w-text_w)/2:y={y}"
-                    f":enable='{enable}'"
-                )
-
-        # ── Loop trigger — last 1.5 seconds shows hook again (drives replays) ──
-        loop_start = max(0, voice_dur - 1.5)
-        loop_enable = f"between(t,{loop_start:.2f},{voice_dur:.2f})"
-        loop_lines = textwrap.wrap(hook_text, width=22) or [hook_text]
-        loop_y = TARGET_H // 2 - 60
-        filters.append(
-            f"drawbox=x=0:y={loop_y - 20}:w={TARGET_W}:h={len(loop_lines) * 70 + 40}"
-            f":color=black@0.7:t=fill:enable='{loop_enable}'"
-        )
-        for i, line in enumerate(loop_lines):
-            filters.append(
-                f"drawtext=fontfile='{font}':text='{self._clean(line)}'"
-                f":fontsize=54:fontcolor=white"
-                f":borderw=3:bordercolor=black"
-                f":x=(w-text_w)/2:y={loop_y + i * 68}"
-                f":enable='{loop_enable}'"
-            )
+        # ── Body captions — REMOVED per request ──────────────────────────
+        # Only the hook (above) and the loop-trigger reshow (below) are
+        # drawn now; no per-sentence caption track during the body.
 
         # ── Loop trigger — last 1.5s shows hook again (drives replays) ────
+        # NOTE: this used to be duplicated as two near-identical blocks
+        # stacked on top of each other (same time window, slightly
+        # different box math) — that was drawing two overlapping
+        # black boxes + two slightly misaligned copies of the hook text
+        # simultaneously during the last 1.5s of every video. Removed
+        # the duplicate; this is the single remaining copy.
         loop_start = max(0, voice_dur - 1.5)
         loop_lines = textwrap.wrap(hook_text, width=22) or [hook_text]
         loop_enable = f"between(t,{loop_start:.2f},{voice_dur:.2f})"

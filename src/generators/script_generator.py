@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import httpx
@@ -38,11 +38,33 @@ STRICT RULES:
 - Lead with a SPECIFIC shocking number or stat in the hook
 - Use real study references casually: "Harvard ne bola", "ICMR data", "2023 study mein"
 - Compare numbers to relatable things: "70g protein = 3 eggs + 1 cup dahi + 100g chicken"
-- Explain the mechanism: WHY does this happen in the body — in 1 simple sentence
-- End with a specific actionable insight — not generic advice
-- Hook must have a NUMBER or specific claim — never vague
-- Total narration: 35-45 words ONLY (15 second video — every word counts)
-- Captions: short punchy sentences, easy to read on screen
+- Explain the mechanism: WHY does this happen in the body — in 1-2 full sentences. Don't skip
+  or compress this just to save words; this is the part that makes the fact actually land.
+- End with a specific actionable insight that calls back to the hook's number or claim —
+  not generic advice. The video replays the hook again at the very end, so the close should
+  feel like it's answering the hook, not just trailing off.
+- Hook must have a NUMBER or specific claim — never vague. It also doubles as the YouTube
+  title, so it must work standalone with zero added context: curiosity-driven, specific,
+  ideally under ~70 characters so it isn't truncated in YouTube's UI.
+- NO FIXED WORD COUNT. Write as many words as the explanation genuinely needs to deliver:
+  hook, the mechanism (why this happens), the common misconception if relevant, and one
+  specific actionable step. Don't pad with filler or restate the same point twice — but don't
+  compress a real explanation just to hit an arbitrary short length either. A complete fact
+  with its mechanism and a real takeaway typically lands around 70-110 words; let the content
+  decide, not a target number.
+- STRUCTURE every script in this order: (1) Hook — the shocking stat. (2) Why — the mechanism,
+  in plain terms. (3) What people usually get wrong about this. (4) One specific, concrete
+  action the viewer can take today. (5) A closing line that explicitly calls back to the
+  hook's number or claim.
+- VISUAL QUERIES: provide one English search term per structural beat above (hook/mechanism/
+  misconception/action), so the video can cut between different footage instead of looping one
+  clip for the whole runtime. Each must be visually CONCRETE, not abstract:
+    ✅ "man eating chicken" — depicts something visual
+    ✅ "person sleeping bed" — depicts something visual
+    ❌ "nutrition concept" — too abstract, can't be filmed
+    ❌ "health awareness" — too abstract, can't be filmed
+  If two beats would naturally look the same on screen, vary the setting or action so the
+  clips don't end up near-duplicates of each other.
 - Language: casual Hinglish — "Yaar", "sun", "soch", "dekho", "actually"
 - tts_text in Devanagari Hindi/Hinglish for proper TTS pronunciation
 - tts_text must be complete narration — not just hook
@@ -81,12 +103,18 @@ Respond ONLY with valid JSON. No markdown, no explanation.
 
 RESPONSE_SCHEMA = """
 {
-  "hook": "shocking opening line, max 12 words, Roman Hinglish",
-  "body": "caption-friendly Roman Hinglish narration with 4-6 short sentences",
+  "hook": "shocking opening line, max 12 words, Roman Hinglish — must also work standalone as a YouTube title with zero added context",
+  "body": "caption-friendly Roman Hinglish narration covering the mechanism, the common misconception, and a concrete actionable step — as many sentences as the explanation genuinely needs, no padding",
   "full_narration": "complete hook + body in the same caption-friendly Roman Hinglish",
-  "tts_text": "complete 35-45 word voiceover, same meaning as full_narration, written in Devanagari Hindi/Hinglish for better TTS pronunciation",
+  "tts_text": "complete voiceover matching full_narration in full — same length, same meaning, no summarizing — written in Devanagari Hindi/Hinglish for better TTS pronunciation",
   "caption": "Instagram caption with 3 relevant hashtags",
-  "visual_query": "3-word English stock video search term for fitness B-roll"
+  "visual_query": "3-word English stock video search term for fitness B-roll — first/main visual, kept for backward compatibility",
+  "visual_queries": [
+    "2-3 word English search term for the HOOK beat — visually concrete, e.g. 'man eating protein' not 'nutrition concept'",
+    "2-3 word English search term for the MECHANISM beat — what's physically happening in the body",
+    "2-3 word English search term for the MISCONCEPTION beat — what people usually do wrong",
+    "2-3 word English search term for the ACTIONABLE STEP beat — the viewer doing the right thing"
+  ]
 }
 """.strip()
 
@@ -103,6 +131,7 @@ class Script:
     short_tts: str = ""         # Devanagari TTS for 13-sec
     caption: str = ""
     visual_query: str = ""
+    visual_queries: list[str] = field(default_factory=list)
     niche: str = ""
     topic: str = ""
 
@@ -187,10 +216,11 @@ class ScriptGenerator:
         return (
             f"Write a viral Hinglish fitness EDUCATION Reel about: '{topic}'."
             f"{news_line}\n\n"
-            f"Use hook/body/full_narration for on-screen Roman Hinglish captions.\n"
+            f"Use hook/body/full_narration for the on-screen hook text and for Instagram captions.\n"
             f"Use tts_text only for voiceover pronunciation. Write tts_text in Devanagari Hindi/Hinglish.\n"
             f"tts_text must contain the full hook and body, not a summary and not only the hook.\n"
-            f"Keep subtitle sentences short and punchy. No long paragraphs.\n"
+            f"There is no fixed word count — write the complete explanation (hook, mechanism, "
+            f"misconception, actionable step), don't pad with filler, and don't cut it short.\n"
             f"Response schema:\n{RESPONSE_SCHEMA}"
         )
 
@@ -210,7 +240,7 @@ class ScriptGenerator:
                     "contents": [{"parts": [{"text": prompt}]}],
                     "generationConfig": {
                         "temperature": 0.65,
-                        "maxOutputTokens": 900,
+                        "maxOutputTokens": 1600,
                         "responseMimeType": "application/json",
                     },
                 },
@@ -239,7 +269,7 @@ class ScriptGenerator:
                         },
                     ],
                     "temperature": 0.65,
-                    "max_tokens": 900,
+                    "max_tokens": 1600,
                     "response_format": {"type": "json_object"},
                 },
             )
@@ -266,7 +296,7 @@ class ScriptGenerator:
                         },
                     ],
                     "temperature": 0.65,
-                    "max_tokens": 900,
+                    "max_tokens": 1600,
                     "response_format": {"type": "json_object"},
                 },
             )
@@ -284,6 +314,12 @@ class ScriptGenerator:
             logger.warning("LLM returned incomplete tts_text; using full_narration instead.")
             tts_text = raw["full_narration"]
         tts_text = self._normalize_tts_text(tts_text)
+
+        visual_queries = raw.get("visual_queries")
+        if not isinstance(visual_queries, list) or not visual_queries:
+            visual_queries = [raw["visual_query"]] if raw.get("visual_query") else []
+        visual_queries = [str(q).strip() for q in visual_queries if str(q).strip()]
+
         return Script(
             hook=raw["hook"].strip(),
             body=raw["body"].strip(),
@@ -291,6 +327,7 @@ class ScriptGenerator:
             tts_text=tts_text.strip(),
             caption=raw["caption"].strip(),
             visual_query=raw["visual_query"].strip(),
+            visual_queries=visual_queries,
             niche=niche,
             topic=topic,
         )
