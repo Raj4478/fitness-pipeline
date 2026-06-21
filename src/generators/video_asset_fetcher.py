@@ -85,6 +85,55 @@ class VideoAssetFetcher:
 
         raise RuntimeError(f"No portrait video found for topic='{topic}' after trying {len(queries)} queries")
 
+    async def fetch_multi(
+        self, topic: str, visual_queries: list[str] | None = None, count: int = 4
+    ) -> list[VideoAsset]:
+        """
+        Fetch up to `count` DISTINCT clips for different visual beats of a
+        script, instead of one clip stretched/looped across the whole
+        video. Tries the LLM-provided visual_queries first (one per
+        structural beat — hook/mechanism/misconception/action), then pads
+        out additional candidates from the curated topic map + fallback
+        queries so there's always enough to try even if visual_queries is
+        short or empty. Skips any clip URL already picked so clips don't
+        repeat. Degrades gracefully: if Pexels only has 1-2 distinct
+        matches for this topic, returns however many it found rather than
+        failing — the renderer handles any count >= 1.
+        """
+        queries = list(visual_queries) if visual_queries else []
+        queries.extend(self._get_queries(topic, ""))
+
+        assets: list[VideoAsset] = []
+        used_urls: set[str] = set()
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            for query in queries:
+                if len(assets) >= count:
+                    break
+                try:
+                    asset = await self._search_pexels(client, query, exclude=used_urls)
+                    if asset:
+                        assets.append(asset)
+                        used_urls.add(asset.url)
+                        logger.info(
+                            "Multi-clip asset %d/%d fetched: %s (query='%s')",
+                            len(assets), count, asset.url, query,
+                        )
+                except Exception as e:
+                    logger.warning("Pexels query '%s' failed: %s", query, e)
+
+        if not assets:
+            raise RuntimeError(
+                f"No portrait video found for topic='{topic}' across {len(queries)} queries (multi-clip)"
+            )
+
+        if len(assets) < count:
+            logger.info(
+                "Multi-clip fetch: got %d/%d requested distinct clips for topic='%s'",
+                len(assets), count, topic,
+            )
+        return assets
+
     def _get_queries(self, topic: str, visual_query: str) -> list[str]:
         """Build ordered list of queries to try."""
         queries = []
@@ -105,7 +154,10 @@ class VideoAssetFetcher:
 
         return queries
 
-    async def _search_pexels(self, client: httpx.AsyncClient, query: str) -> VideoAsset | None:
+    async def _search_pexels(
+        self, client: httpx.AsyncClient, query: str, exclude: set[str] | None = None
+    ) -> VideoAsset | None:
+        exclude = exclude or set()
         resp = await client.get(
             "https://api.pexels.com/videos/search",
             headers={"Authorization": self.settings.pexels_api_key},
@@ -124,8 +176,8 @@ class VideoAssetFetcher:
             for vf in video.get("video_files", []):
                 w, h = vf.get("width", 0), vf.get("height", 0)
                 dur = video.get("duration", 0)
-                # Portrait + at least 8 seconds + reasonable resolution
-                if h > w and dur >= 8 and w >= 360:
+                # Portrait + at least 8 seconds + reasonable resolution + not already used
+                if h > w and dur >= 8 and w >= 360 and vf["link"] not in exclude:
                     return VideoAsset(
                         url=vf["link"],
                         width=w,

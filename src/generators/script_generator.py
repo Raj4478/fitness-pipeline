@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import httpx
@@ -56,6 +56,15 @@ STRICT RULES:
   in plain terms. (3) What people usually get wrong about this. (4) One specific, concrete
   action the viewer can take today. (5) A closing line that explicitly calls back to the
   hook's number or claim.
+- VISUAL QUERIES: provide one English search term per structural beat above (hook/mechanism/
+  misconception/action), so the video can cut between different footage instead of looping one
+  clip for the whole runtime. Each must be visually CONCRETE, not abstract:
+    ✅ "man eating chicken" — depicts something visual
+    ✅ "person sleeping bed" — depicts something visual
+    ❌ "nutrition concept" — too abstract, can't be filmed
+    ❌ "health awareness" — too abstract, can't be filmed
+  If two beats would naturally look the same on screen, vary the setting or action so the
+  clips don't end up near-duplicates of each other.
 - Language: casual Hinglish — "Yaar", "sun", "soch", "dekho", "actually"
 - tts_text in Devanagari Hindi/Hinglish for proper TTS pronunciation
 - tts_text must be complete narration — not just hook
@@ -99,7 +108,13 @@ RESPONSE_SCHEMA = """
   "full_narration": "complete hook + body in the same caption-friendly Roman Hinglish",
   "tts_text": "complete voiceover matching full_narration in full — same length, same meaning, no summarizing — written in Devanagari Hindi/Hinglish for better TTS pronunciation",
   "caption": "Instagram caption with 3 relevant hashtags",
-  "visual_query": "3-word English stock video search term for fitness B-roll"
+  "visual_query": "3-word English stock video search term for fitness B-roll — first/main visual, kept for backward compatibility",
+  "visual_queries": [
+    "2-3 word English search term for the HOOK beat — visually concrete, e.g. 'man eating protein' not 'nutrition concept'",
+    "2-3 word English search term for the MECHANISM beat — what's physically happening in the body",
+    "2-3 word English search term for the MISCONCEPTION beat — what people usually do wrong",
+    "2-3 word English search term for the ACTIONABLE STEP beat — the viewer doing the right thing"
+  ]
 }
 """.strip()
 
@@ -116,6 +131,7 @@ class Script:
     short_tts: str = ""         # Devanagari TTS for 13-sec
     caption: str = ""
     visual_query: str = ""
+    visual_queries: list[str] = field(default_factory=list)
     niche: str = ""
     topic: str = ""
 
@@ -298,6 +314,12 @@ class ScriptGenerator:
             logger.warning("LLM returned incomplete tts_text; using full_narration instead.")
             tts_text = raw["full_narration"]
         tts_text = self._normalize_tts_text(tts_text)
+
+        visual_queries = raw.get("visual_queries")
+        if not isinstance(visual_queries, list) or not visual_queries:
+            visual_queries = [raw["visual_query"]] if raw.get("visual_query") else []
+        visual_queries = [str(q).strip() for q in visual_queries if str(q).strip()]
+
         return Script(
             hook=raw["hook"].strip(),
             body=raw["body"].strip(),
@@ -305,6 +327,7 @@ class ScriptGenerator:
             tts_text=tts_text.strip(),
             caption=raw["caption"].strip(),
             visual_query=raw["visual_query"].strip(),
+            visual_queries=visual_queries,
             niche=niche,
             topic=topic,
         )
