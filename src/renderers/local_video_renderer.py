@@ -335,6 +335,7 @@ class LocalVideoRenderer:
                     "-map", "[vout]",
                     "-map", "[aout]",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-maxrate", "5500k", "-bufsize", "11000k",
                     "-c:a", "aac", "-b:a", "192k",
                     "-t", str(total_dur),
                     str(out)
@@ -354,6 +355,7 @@ class LocalVideoRenderer:
                     "-map", "0:v",
                     "-map", "[aout]",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-maxrate", "5500k", "-bufsize", "11000k",
                     "-c:a", "aac", "-b:a", "192k",
                     "-t", str(total_dur),
                     str(out)
@@ -376,6 +378,7 @@ class LocalVideoRenderer:
                     "-map", "[vout]",
                     "-map", "1:a",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-maxrate", "5500k", "-bufsize", "11000k",
                     "-c:a", "aac", "-b:a", "192k",
                     "-t", str(total_dur),
                     str(out)
@@ -388,6 +391,7 @@ class LocalVideoRenderer:
                     "-vf", vf,
                     "-map", "0:v", "-map", "1:a",
                     "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-maxrate", "5500k", "-bufsize", "11000k",
                     "-c:a", "aac", "-b:a", "192k",
                     "-t", str(total_dur),
                     str(out)
