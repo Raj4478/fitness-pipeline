@@ -275,15 +275,26 @@ async def run_pipeline(
             logger.info("[6/7] ⏭️  Dry run — skipping publish")
 
         # ── 5b. 13-second short version — DISABLED ────────────────────
-        # Same fix as on fix/distribution-pipeline: this called
-        # _upload_short_version(), which is never defined anywhere in the
-        # codebase, so this step has silently failed on every run. The
-        # render itself is also broken independent of that — target_duration
-        # just truncates the FULL narration audio mid-sentence via ffmpeg's
-        # `-t` flag, and script.short_narration is never populated by the
-        # LLM schema. Disabled until rebuilt properly. (This branch was
-        # created before that fix existed on the other branch, hence
-        # re-applying it here too, for consistency once the branches merge.)
+        # ── 5b. 13-second short version — DISABLED ────────────────────
+        # This used to call _upload_short_version(), which was never
+        # defined anywhere in the codebase, so this step has silently
+        # failed on every run (caught by the except below and logged as
+        # "non-critical"). The render itself is also broken independent
+        # of that: target_duration=13.0 just truncates the FULL narration
+        # audio at the 13s mark via ffmpeg's `-t` flag — it does not
+        # re-synthesize shorter audio — so playback cuts off mid-sentence.
+        # `script.short_narration` is also never populated by the LLM
+        # response schema (it's always ""), so body_text fell back to
+        # just the hook with no real captions for the rest of the clip.
+        # Worse: because this render ran AFTER the main render into the
+        # same tmp/videos/ folder, the "pick the latest file by mtime"
+        # logic in send_to_telegram.py and repurpose_for_shorts.py could
+        # pick up THIS truncated file instead of the finished main video.
+        # Disabled until the short-form version is rebuilt properly
+        # (real shortened TTS synthesis + a populated short_narration
+        # field). See send_to_telegram.py / repurpose_for_shorts.py for
+        # the accompanying fix that excludes "13sec" files defensively
+        # even if this is re-enabled later without that safeguard.
 
         # ── 6b. Generate carousel ─────────────────────────────────────
         logger.info("[6b] Generating Instagram carousel...")
