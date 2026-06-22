@@ -163,6 +163,11 @@ def upload_to_youtube(video_path: Path, topic: str) -> str:
         "status": {
             "privacyStatus": "public",
             "selfDeclaredMadeForKids": False,
+            # Required disclosure — this pipeline uses AI for script
+            # generation (Gemini/Groq), TTS (ElevenLabs/gTTS), and B-roll
+            # footage sourced from Pexels via automated query. YouTube has
+            # been suppressing AI-generated content without this flag.
+            "containsSyntheticMedia": True,
         },
     }
 
@@ -188,6 +193,39 @@ def upload_to_youtube(video_path: Path, topic: str) -> str:
     video_id = response["id"]
     video_url = f"https://youtube.com/shorts/{video_id}"
     logger.info("✅ Uploaded to YouTube: %s", video_url)
+
+    # ── Upload thumbnail ───────────────────────────────────────────────
+    # generate_thumbnail.py writes thumb_{video_stem}.png into the same
+    # directory as the video, and the CI step that runs it does so before
+    # this upload step, so the file should always exist at this point.
+    thumb_path = video_path.parent / f"thumb_{video_path.stem}.png"
+    if thumb_path.exists():
+        try:
+            thumb_media = MediaFileUpload(
+                str(thumb_path),
+                mimetype="image/png",
+                resumable=False,
+            )
+            youtube.thumbnails().set(
+                videoId=video_id,
+                media_body=thumb_media,
+            ).execute()
+            logger.info("✅ Thumbnail uploaded: %s", thumb_path.name)
+        except Exception as e:
+            # Thumbnail upload requires the channel to be verified (phone
+            # number verification in YouTube Studio). Log clearly so the
+            # error is obvious, but don't fail the whole upload over it.
+            logger.warning(
+                "Thumbnail upload failed (channel may need verification "
+                "at youtube.com/verify): %s", e
+            )
+    else:
+        logger.warning(
+            "Thumbnail not found at %s — generate_thumbnail.py may have "
+            "failed or VIDEO_PATH env var wasn't set correctly in CI",
+            thumb_path,
+        )
+
     return video_url
 
 
@@ -238,25 +276,25 @@ def get_topic_from_logs() -> str:
 def main():
     import asyncio
 
-    # Find latest shorts video
-    shorts_dir = Path("tmp/shorts")
+    # tmp/shorts was populated by the now-disabled 13-sec short render —
+    # it's never written to anymore. Always use tmp/videos directly, and
+    # exclude 13sec/short filenames the same way send_to_telegram.py does.
     videos_dir = Path("tmp/videos")
-
-    # Prefer shorts version, fallback to main video
-    for search_dir in [shorts_dir, videos_dir]:
-        if search_dir.exists():
-            videos = sorted(
-                search_dir.glob("*.mp4"),
-                key=lambda f: f.stat().st_mtime,
-                reverse=True
-            )
-            if videos:
-                latest = videos[0]
-                break
-    else:
-        logger.error("No videos found")
+    if not videos_dir.exists():
+        logger.error("tmp/videos not found")
         return
 
+    videos = sorted(
+        (f for f in videos_dir.glob("*.mp4")
+         if "13sec" not in f.stem and "short" not in f.stem),
+        key=lambda f: f.stat().st_mtime,
+        reverse=True,
+    )
+    if not videos:
+        logger.error("No videos found in tmp/videos/")
+        return
+
+    latest = videos[0]
     topic = get_topic_from_logs()
     logger.info("Uploading topic: %s | file: %s", topic, latest.name)
 
