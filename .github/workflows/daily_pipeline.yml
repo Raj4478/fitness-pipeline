@@ -130,6 +130,7 @@ jobs:
           fi
 
       - name: Upload to YouTube Shorts
+        id: youtube_upload
         if: success()
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
@@ -138,6 +139,18 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
         run: python scripts/upload_to_youtube.py
+
+      - name: Post pinned comment
+        if: success() && steps.youtube_upload.outputs.youtube_video_id != ''
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          YOUTUBE_VIDEO_ID: ${{ steps.youtube_upload.outputs.youtube_video_id }}
+          VIDEO_TOPIC: ${{ env.VIDEO_TOPIC }}
+        run: |
+          export VIDEO_TOPIC=$(grep "Topic selected:" logs/pipeline_*.log 2>/dev/null | tail -1 | awk '{print $NF}')
+          python scripts/post_pinned_comment.py || echo "Pinned comment failed (non-critical)"
 
       - name: Print error summary on failure
         if: failure()

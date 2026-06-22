@@ -118,37 +118,130 @@ def main():
             yd_views = yd_subs = best_views = 0
             best_date = str(yesterday)
 
-        # ── Top 3 recent videos ────────────────────────────────────────
-        videos_resp = youtube.search().list(
-            part="snippet",
-            forMine=True,
-            type="video",
-            order="date",
-            maxResults=5,
-        ).execute()
-
+        # ── Top videos with per-video RETENTION metrics ───────────────
+        # View count alone is misleading — a video with 1000 views at 20%
+        # retention is worse than 500 views at 60% retention because the
+        # algorithm uses retention to decide whether to keep distributing.
+        # YouTube Analytics API supports per-video averageViewDuration and
+        # averageViewPercentage via dimensions=video.
         video_ids = [item["id"]["videoId"] for item in videos_resp.get("items", [])]
 
         top_videos_info = ""
+        retention_by_video = {}
+
         if video_ids:
+            # Fetch view counts and titles
             vids_resp = youtube.videos().list(
                 part="statistics,snippet",
-                id=",".join(video_ids[:5]),
+                id=",".join(video_ids[:10]),
             ).execute()
+
+            # Fetch per-video retention from Analytics API
+            try:
+                retention_resp = yt_analytics.reports().query(
+                    ids="channel==MINE",
+                    startDate=str(week_ago),
+                    endDate=str(yesterday),
+                    metrics="views,averageViewDuration,averageViewPercentage",
+                    dimensions="video",
+                    sort="-views",
+                    maxResults=10,
+                ).execute()
+
+                for row in retention_resp.get("rows", []):
+                    vid_id = row[0]
+                    retention_by_video[vid_id] = {
+                        "views": int(row[1]),
+                        "avg_duration": float(row[2]),
+                        "avg_pct": float(row[3]),
+                    }
+            except Exception as e:
+                logger.warning("Per-video retention fetch failed: %s", e)
 
             vids = sorted(
                 vids_resp.get("items", []),
                 key=lambda v: int(v["statistics"].get("viewCount", 0)),
-                reverse=True
-            )[:3]
+                reverse=True,
+            )[:5]
 
             lines = []
             for v in vids:
-                title = v["snippet"]["title"][:40]
+                vid_id = v["id"]
+                title = v["snippet"]["title"][:35]
                 views = format_num(v["statistics"].get("viewCount", 0))
                 likes = format_num(v["statistics"].get("likeCount", 0))
-                lines.append(f"  • {views} views | {likes} likes | {title}")
+
+                ret = retention_by_video.get(vid_id, {})
+                if ret:
+                    avg_dur = int(ret.get("avg_duration", 0))
+                    avg_pct = ret.get("avg_pct", 0)
+                    ret_str = f"{avg_dur}s ({avg_pct:.0f}%)"
+                else:
+                    ret_str = "N/A"
+
+                lines.append(
+                    f"  • {views} views | {likes}❤️ | ⏱{ret_str}\n"
+                    f"    {title}"
+                )
             top_videos_info = "\n".join(lines)
+
+        # ── Topic performance summary ──────────────────────────────────
+        # Map video titles back to topics by keyword matching so you can
+        # see which content buckets are retaining viewers vs getting swiped.
+        TOPIC_KEYWORDS = {
+            "protein": "protein myths",
+            "vitamin": "vitamin d deficiency",
+            "sleep": "sleep & muscle",
+            "sugar": "sugar-free drinks",
+            "walking": "walking vs running",
+            "creatine": "creatine",
+            "fasting": "intermittent fasting",
+            "gym": "gym myths",
+            "cardio": "cardio vs weights",
+            "stress": "stress & belly fat",
+            "overtraining": "overtraining",
+            "morning": "morning vs evening",
+            "hydration": "hydration",
+            "bmi": "bmi myths",
+            "processed": "processed food",
+            "gut": "gut health",
+            "yoga": "yoga science",
+            "sitting": "sitting disease",
+            "cold water": "cold water myth",
+            "indian diet": "indian diet",
+        }
+
+        topic_perf_lines = []
+        for vid_id, ret in sorted(
+            retention_by_video.items(),
+            key=lambda x: x[1].get("avg_pct", 0),
+            reverse=True
+        )[:5]:
+            # Find matching video title
+            vid_title = next(
+                (v["snippet"]["title"].lower()
+                 for v in vids_resp.get("items", []) if v["id"] == vid_id),
+                "",
+            )
+            topic_label = next(
+                (label for kw, label in TOPIC_KEYWORDS.items() if kw in vid_title),
+                vid_title[:25] or vid_id,
+            )
+            avg_pct = ret.get("avg_pct", 0)
+            avg_dur = int(ret.get("avg_duration", 0))
+            views = format_num(ret.get("views", 0))
+            emoji = "🔥" if avg_pct >= 50 else "✅" if avg_pct >= 30 else "⚠️"
+            topic_perf_lines.append(
+                f"  {emoji} {topic_label}: {avg_pct:.0f}% ret | {avg_dur}s | {views} views"
+            )
+
+        topic_perf_section = ""
+        if topic_perf_lines:
+            topic_perf_section = (
+                f"\n━━━ TOPIC RETENTION (best→worst) ━━━\n"
+                + "\n".join(topic_perf_lines)
+                + "\n🔥=50%+ ✅=30-49% ⚠️=<30%\n"
+            )
 
         # ── Build Telegram message ─────────────────────────────────────
         now_ist = datetime.now(IST).strftime("%d %b %Y %I:%M %p IST")
@@ -173,8 +266,9 @@ def main():
             f"👥 Subs: +{yd_subs}\n\n"
             f"━━━ BEST DAY THIS WEEK ━━━\n"
             f"📅 {best_date}: {format_num(best_views)} views\n\n"
-            f"━━━ TOP 5 RECENT VIDEOS ━━━\n"
-            f"{top_videos_info}\n\n"
+            f"━━━ TOP 5 VIDEOS (views + retention) ━━━\n"
+            f"{top_videos_info}"
+            f"{topic_perf_section}\n"
             f"{'='*35}\n"
             f"Target: 10M views in 90 days for monetization 🎯"
         )

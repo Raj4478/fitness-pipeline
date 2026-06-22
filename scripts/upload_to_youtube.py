@@ -157,7 +157,11 @@ def upload_to_youtube(video_path: Path, topic: str) -> str:
             "title": final_title[:100],  # YouTube title limit
             "description": yt_data["description"][:5000],
             "tags": yt_data["tags"],
-            "categoryId": "17",  # Sports category
+            "categoryId": "26",  # Howto & Style — correct category for fitness education content.
+            # Category 17 is Sports (cricket matches, live sports broadcasts).
+            # 26 is where every major Indian fitness creator sits (Fit Tuber,
+            # Nikhil Fit, etc.) and affects which audience the recommendation
+            # feed serves this video to.
             "defaultLanguage": "hi",
         },
         "status": {
@@ -193,6 +197,14 @@ def upload_to_youtube(video_path: Path, topic: str) -> str:
     video_id = response["id"]
     video_url = f"https://youtube.com/shorts/{video_id}"
     logger.info("✅ Uploaded to YouTube: %s", video_url)
+
+    # Write video_id to GITHUB_OUTPUT so subsequent CI steps (pinned
+    # comment, etc.) can consume it without needing to re-query YouTube.
+    github_output = os.getenv("GITHUB_OUTPUT", "")
+    if github_output:
+        with open(github_output, "a") as f:
+            f.write(f"youtube_video_id={video_id}\n")
+        logger.info("youtube_video_id written to GITHUB_OUTPUT")
 
     # ── Upload thumbnail ───────────────────────────────────────────────
     # generate_thumbnail.py writes thumb_{video_stem}.png into the same
