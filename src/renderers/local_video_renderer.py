@@ -184,30 +184,83 @@ class LocalVideoRenderer:
             slot_files.append(slot)
             consumed += slot_dur
 
-        concat_list = OUTPUT_DIR / f"concat_{rid}.txt"
-        concat_list.write_text(
-            "\n".join(f"file '{f.resolve()}'" for f in slot_files)
-        )
-        temp_files.append(concat_list)
+        # Use the ffmpeg concat FILTER (not the concat demuxer) with a full
+        # re-encode pass. The demuxer + -c copy approach has two problems:
+        # (1) it relies on there being an IDR keyframe at the very start of
+        #     each input file — not guaranteed on arbitrary Pexels clips even
+        #     after _loop() has reset PTS, so players freeze waiting for the
+        #     next decodable keyframe at every cut boundary.
+        # (2) the concat demuxer adjusts timestamps by adding an offset but
+        #     doesn't re-encode, so any rounding in the source timestamps
+        #     accumulates across cuts and can produce a visible stutter.
+        # The concat filter re-encodes the whole output in one pass, so every
+        # cut boundary is guaranteed to have a keyframe and timestamps are
+        # always perfectly continuous.
+        n = len(slot_files)
+        inputs = []
+        for sf in slot_files:
+            inputs += ["-i", str(sf)]
+
+        filter_str = "".join(f"[{i}:v]" for i in range(n))
+        filter_str += f"concat=n={n}:v=1:a=0[vout]"
+
+        # Force an IDR keyframe at every slot boundary so players can decode
+        # cleanly at each cut without waiting for the next keyframe. The concat
+        # filter joins the streams but x264 picks its own keyframe schedule in
+        # the output; without explicit force_key_frames, a cut boundary that
+        # doesn't happen to align with a natural keyframe produces a visible
+        # freeze while the decoder waits for the next IDR.
+        slot_dur = total_dur / n
+        kf_times = ",".join(str(round(slot_dur * i, 3)) for i in range(n))
 
         final = OUTPUT_DIR / f"multiclip_{rid}.mp4"
         self._ff([
-            "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
-            "-c", "copy", str(final),
+            "-y",
+            *inputs,
+            "-filter_complex", filter_str,
+            "-map", "[vout]",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-force_key_frames", kf_times,
+            "-an",
+            str(final),
         ])
 
         self._cleanup(temp_files)
         return final
 
     def _crop(self, src, dst):
+        # setsar=1:1 normalizes the Sample Aspect Ratio so all cropped slots
+        # have an identical SAR before they reach the concat filter. Pexels
+        # clips can carry fractional SARs (e.g. 1216:1215) that survive the
+        # scale step intact -- if two slots disagree on SAR, ffmpeg's concat
+        # filter treats them as mismatched streams and refuses to proceed.
         vf = (f"crop='if(gt(iw/ih,9/16),ih*9/16,iw)':'if(gt(iw/ih,9/16),ih,iw*16/9)',"
-              f"scale={TARGET_W}:{TARGET_H}:flags=lanczos")
+              f"scale={TARGET_W}:{TARGET_H}:flags=lanczos,"
+              f"setsar=1:1")
         self._ff(["-y","-i",str(src),"-vf",vf,"-an","-c:v","libx264","-preset","fast","-crf","23",str(dst)])
 
     def _loop(self, src, dst, dur):
+        # Re-encode rather than stream-copy (-c copy). Stream-copy preserves
+        # the source timestamps, so on a looped file the second and third
+        # iterations continue counting from where the first ended, producing
+        # a non-monotonic PTS jump at the concat boundary that makes players
+        # freeze or stutter. Re-encoding resets PTS cleanly to zero so every
+        # slot file starts at t=0 and the concat demuxer can stitch them
+        # without any timestamp discontinuities.
+        # setpts=PTS-STARTPTS explicitly resets the video clock regardless of
+        # what the source clip's timestamps happened to be.
         cd = self._get_duration(src)
         loops = max(1, math.ceil(dur / cd))
-        self._ff(["-y","-stream_loop",str(loops),"-i",str(src),"-t",str(dur),"-c","copy",str(dst)])
+        self._ff([
+            "-y",
+            "-stream_loop", str(loops),
+            "-i", str(src),
+            "-t", str(dur),
+            "-vf", "setpts=PTS-STARTPTS",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-an",
+            str(dst),
+        ])
 
     def _burn_all(self, video, audio, hook_text, body_text, voice_dur, total_dur, music_path, out):
         """
