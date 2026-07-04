@@ -249,18 +249,18 @@ async def run_pipeline(
                         video_path,
                     )
                     publish_url = ""
-                elif (
-                    settings.cloudinary_cloud_name
-                    and settings.cloudinary_api_key
-                    and settings.cloudinary_api_secret
-                ):
-                    uploader = MediaUploader(settings)
-                    publish_url = await uploader.upload_video(video_path)
                 else:
-                    logger.warning(
-                        "[6/7] No public video URL and Cloudinary not configured — skipping publish"
-                    )
-                    publish_url = ""
+                    import os as _os
+                    gh_token = _os.getenv("GH_UPLOAD_TOKEN", _os.getenv("GITHUB_TOKEN", ""))
+                    if gh_token:
+                        uploader = MediaUploader(settings)
+                        publish_url = await uploader.upload_video(video_path)
+                        logger.info("[6/7] ✅ Uploaded to GitHub Releases: %s", publish_url)
+                    else:
+                        logger.warning(
+                            "[6/7] GH_UPLOAD_TOKEN not set — skipping upload"
+                        )
+                        publish_url = ""
 
             if publish_url:
                 post_ids = await publisher.publish(
