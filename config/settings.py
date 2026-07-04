@@ -83,10 +83,9 @@ class Settings(BaseSettings):
     # ── Pexels (stock video) ──────────────────────────────────────────
     pexels_api_key: str = Field(default="", description="Pexels API key")
 
-    # ── Cloudinary (audio CDN) ────────────────────────────────────────
-    cloudinary_cloud_name: str = Field(default="", description="Cloudinary cloud name")
-    cloudinary_api_key: str = Field(default="", description="Cloudinary API key")
-    cloudinary_api_secret: str = Field(default="", description="Cloudinary API secret")
+    # ── GitHub Releases (video/audio storage) ────────────────────────
+    # Token needs 'repo' scope. Create at github.com/settings/tokens
+    gh_upload_token: str = Field(default="", description="GitHub token for release uploads")
 
     # ── App config ────────────────────────────────────────────────────
     db_path: Path = Path("data/runs.db")
