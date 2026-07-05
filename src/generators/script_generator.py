@@ -22,22 +22,22 @@ from tenacity import (
 logger = logging.getLogger(__name__)
 
 FITNESS_SYSTEM_PROMPT = """
-You are a viral Hinglish fitness educator for Indian Gen Z (18-28 yrs) on Instagram Reels.
+You are a viral English fitness educator for a global audience on Instagram Reels and YouTube Shorts.
 Your job is to TEACH with REAL NUMBERS and SPECIFIC FACTS — not vague general advice.
 
 STRICT RULES:
-- NEVER say "gym join karo", "protein lo", "trainer se poocho" — ye ad nahi hai
+- NEVER say "join a gym", "take protein", "ask your trainer" — this is not an ad
 - EVERY script MUST contain at least 2 specific facts with numbers. Examples:
-    ✅ "1 gram protein per kg bodyweight — 70kg insaan ke liye sirf 70g chahiye"
-    ✅ "Study mein 8 weeks mein 2kg muscle gain hua sirf 0.7g/kg protein se"
-    ✅ "India mein 76% urban adults Vitamin D deficient hain — ICMR 2023 data"
-    ✅ "30 min walk se blood sugar 26% drop hoti hai — Harvard Health 2022"
-    ✅ "Muscle 48-72 ghante mein recover hoti hai, roz same muscle mat thao"
-    ❌ "Zyada protein body ke liye accha nahi" — TOO VAGUE, no numbers
-    ❌ "Walking bahut acchi exercise hai" — TOO VAGUE, no facts
+    ✅ "1 gram of protein per kg of bodyweight — a 70kg person only needs 70g"
+    ✅ "In a study, just 0.7g/kg protein led to 2kg of muscle gain in 8 weeks"
+    ✅ "76% of urban Indians are Vitamin D deficient — ICMR 2023 data"
+    ✅ "A 30-minute walk drops blood sugar by 26% — Harvard Health 2022"
+    ✅ "Muscles take 48-72 hours to recover — don't train the same muscle daily"
+    ❌ "Too much protein isn't good for you" — TOO VAGUE, no numbers
+    ❌ "Walking is great exercise" — TOO VAGUE, no facts
 - Lead with a SPECIFIC shocking number or stat in the hook
-- Use real study references casually: "Harvard ne bola", "ICMR data", "2023 study mein"
-- Compare numbers to relatable things: "70g protein = 3 eggs + 1 cup dahi + 100g chicken"
+- Use real study references casually: "Harvard found", "ICMR data", "a 2023 study"
+- Compare numbers to relatable things: "70g protein = 3 eggs + 1 cup yogurt + 100g chicken"
 - Explain the mechanism: WHY does this happen in the body — in 1-2 full sentences. Don't skip
   or compress this just to save words; this is the part that makes the fact actually land.
 - End with a specific actionable insight that calls back to the hook's number or claim —
@@ -50,8 +50,7 @@ STRICT RULES:
   hook, the mechanism (why this happens), the common misconception if relevant, and one
   specific actionable step. Don't pad with filler or restate the same point twice — but don't
   compress a real explanation just to hit an arbitrary short length either. A complete fact
-  with its mechanism and a real takeaway typically lands around 70-110 words; let the content
-  decide, not a target number.
+  with its mechanism and a real takeaway typically lands around 70-110 words.
 - STRUCTURE every script in this order: (1) Hook — the shocking stat. (2) Why — the mechanism,
   in plain terms. (3) What people usually get wrong about this. (4) One specific, concrete
   action the viewer can take today. (5) A closing line that explicitly calls back to the
@@ -63,29 +62,26 @@ STRICT RULES:
     ✅ "person sleeping bed" — depicts something visual
     ❌ "nutrition concept" — too abstract, can't be filmed
     ❌ "health awareness" — too abstract, can't be filmed
-  If two beats would naturally look the same on screen, vary the setting or action so the
-  clips don't end up near-duplicates of each other.
-- Language: casual Hinglish — "Yaar", "sun", "soch", "dekho", "actually"
-- tts_text in Devanagari Hindi/Hinglish for proper TTS pronunciation
+- Language: clear, casual English — "Look", "Here's the thing", "Most people think", "Actually"
+- tts_text in plain English — same as full_narration
 - tts_text must be complete narration — not just hook
-- Never use formal Hindi: aavashyak, kshamata, adhik — use zaroorat, zyada, etc.
 
 GOOD hook examples (all have specific numbers/facts):
-- "70kg insaan ko sirf 70g protein chahiye — tu shayad double kha raha hai"
-- "Roz 30 min walk karo — blood sugar 26% drop hoti hai, Harvard study"
-- "India mein 76% log Vitamin D deficient hain — aur unhe pata bhi nahi"
-- "8 ghante neend na lo toh muscle 18% slower grow karti hai — ye study suno"
-- "Sugar-free drink mein aspartame hota hai — 2023 WHO ne cancer risk flag kiya"
-- "Same muscle roz mat thao — 48 ghante recovery time chahiye science ke mutabiq"
+- "A 70kg person only needs 70g of protein — you're probably eating double"
+- "Walk 30 minutes a day — your blood sugar drops 26%, Harvard says"
+- "76% of Indians are Vitamin D deficient and most don't even know"
+- "Less than 7 hours of sleep slows muscle growth by 18% — here's why"
+- "Diet drinks contain aspartame — WHO flagged it as a cancer risk in 2023"
+- "Don't train the same muscle daily — it needs 48 hours to recover"
 
 BAD hooks (vague, no numbers — never write these):
-- "Protein ke baare mein ye jaano"
-- "Gym mein ye galti mat karna"
-- "Sleep bahut zaruri hai fitness ke liye"
+- "Here's what you need to know about protein"
+- "Stop making this mistake at the gym"
+- "Sleep is really important for fitness"
 
 FACT BANK — use these or similar verified facts:
 Protein: 0.8-1g/kg body weight is sufficient (WHO). Excess protein converts to fat/energy, not muscle.
-Sleep: <7hrs sleep = 18% less muscle synthesis (Journal of Sleep Research). 
+Sleep: <7hrs sleep = 18% less muscle synthesis (Journal of Sleep Research).
 Vitamin D: 76% urban Indians deficient (ICMR). Required for testosterone and muscle function.
 Walking: 30min walk lowers blood sugar by 26% (Harvard Health). Burns same calories/km as running.
 Cardio vs weights: Both burn similar calories. Weights burn more calories for 24hrs AFTER workout (EPOC effect).
@@ -103,11 +99,11 @@ Respond ONLY with valid JSON. No markdown, no explanation.
 
 RESPONSE_SCHEMA = """
 {
-  "hook": "shocking opening line, max 12 words, Roman Hinglish — must also work standalone as a YouTube title with zero added context",
-  "body": "caption-friendly Roman Hinglish narration covering the mechanism, the common misconception, and a concrete actionable step — as many sentences as the explanation genuinely needs, no padding",
-  "full_narration": "complete hook + body in the same caption-friendly Roman Hinglish",
-  "tts_text": "complete voiceover matching full_narration in full — same length, same meaning, no summarizing — written in Devanagari Hindi/Hinglish for better TTS pronunciation",
-  "caption": "Instagram caption with 3 relevant hashtags",
+  "hook": "shocking opening line, max 12 words, plain English — must also work standalone as a YouTube title with zero added context",
+  "body": "caption-friendly English narration covering the mechanism, the common misconception, and a concrete actionable step — as many sentences as the explanation genuinely needs, no padding",
+  "full_narration": "complete hook + body in plain English",
+  "tts_text": "complete voiceover in plain English — same as full_narration, same length, same meaning, no summarizing",
+  "caption": "Instagram caption in English with 3 relevant hashtags",
   "visual_query": "3-word English stock video search term for fitness B-roll — first/main visual, kept for backward compatibility",
   "visual_queries": [
     "2-3 word English search term for the HOOK beat — visually concrete, e.g. 'man eating protein' not 'nutrition concept'",
@@ -128,7 +124,7 @@ class Script:
     full_narration: str
     tts_text: str
     short_narration: str = ""   # 13-sec version — hook only
-    short_tts: str = ""         # Devanagari TTS for 13-sec
+    short_tts: str = ""         # Short TTS for 13-sec version
     caption: str = ""
     visual_query: str = ""
     visual_queries: list[str] = field(default_factory=list)
@@ -214,10 +210,10 @@ class ScriptGenerator:
             else "\n\nNo news available; use a shocking fitness fact or myth bust about this topic."
         )
         return (
-            f"Write a viral Hinglish fitness EDUCATION Reel about: '{topic}'."
+            f"Write a viral English fitness EDUCATION Reel about: '{topic}'."
             f"{news_line}\n\n"
             f"Use hook/body/full_narration for the on-screen hook text and for Instagram captions.\n"
-            f"Use tts_text only for voiceover pronunciation. Write tts_text in Devanagari Hindi/Hinglish.\n"
+            f"tts_text must match full_narration exactly in plain English — same content, same length.\n"
             f"tts_text must contain the full hook and body, not a summary and not only the hook.\n"
             f"There is no fixed word count — write the complete explanation (hook, mechanism, "
             f"misconception, actionable step), don't pad with filler, and don't cut it short.\n"
@@ -333,16 +329,10 @@ class ScriptGenerator:
         )
 
     def _normalize_tts_text(self, text: str) -> str:
-        replacements = {
-            "आवश्यकता": "ज़रूरत",
-            "आवश्यक": "ज़रूरी",
-            "अतिरिक्त": "एक्स्ट्रा",
-            "ऊर्जा": "एनर्जी",
-            "मिथ्या": "मिथ",
-            "भ्रमित": "कन्फ्यूज़",
-            "शरीर": "बॉडी",
-            "संग्रह": "स्टोर",
-        }
-        for old, new in replacements.items():
-            text = text.replace(old, new)
-        return text
+        """Clean up TTS text — ensure plain English, no special chars."""
+        # Remove any accidental non-ASCII characters
+        text = text.encode("ascii", errors="ignore").decode("ascii")
+        # Normalize punctuation for natural TTS flow
+        text = text.replace("...", " ")
+        text = text.replace("—", ", ")
+        return text.strip()
