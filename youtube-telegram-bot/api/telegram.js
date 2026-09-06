@@ -1,8 +1,8 @@
 import { extractYouTubeId, fetchYouTubeMetadata } from '../src/youtube.js';
 import { generateContent } from '../src/content.js';
 import { parseAllowHosts, validateDownloadUrl } from '../src/download-policy.js';
-import { sendPermittedVideo, sendText, editText, telegramCall } from '../src/telegram.js';
-import { HELP, PRIVACY, FORMATS, firstUrl, readAction, formatKeyboard, sourceSummary, formatDraft } from '../src/experience.js';
+import { sendPermittedVideo, sendDocument, sendText, editText, telegramCall } from '../src/telegram.js';
+import { HELP, PRIVACY, FORMATS, VARIANTS, EXAMPLES, repliedDraft, firstUrl, readAction, formatKeyboard, sourceSummary, formatDraft } from '../src/experience.js';
 import { boundedFetch } from '../src/network.js';
 
 export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn = fetchYouTubeMetadata, generateFn = generateContent, now = Date.now } = {}) {
@@ -10,7 +10,7 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
   const seen = new Map();
   const busy = new Set();
   return async function handler(req, res) {
-    if (req.method === 'GET') return res.status(200).json({ ok: true, service: 'youtube-telegram-chiro-bot', version: '0.2.0' });
+    if (req.method === 'GET') return res.status(200).json({ ok: true, service: 'youtube-telegram-chiro-bot', version: '0.3.0' });
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'method_not_allowed' });
     const token = env.TELEGRAM_BOT_TOKEN || '';
     const allowedUser = String(env.TELEGRAM_ALLOWED_USER_ID || '').trim();
@@ -28,7 +28,7 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
     const chatId = message.chat.id;
     const deadline = AbortSignal.timeout(22000);
     const io = (url, options = {}) => fetchImpl(url, { ...options, signal: options.signal ? AbortSignal.any([options.signal, deadline]) : deadline });
-    let progressId, stage = 'input', generating = false, videoId, format = 'caption';
+    let progressId, stage = 'input', generating = false, videoId, format = 'caption', variant = '', previousDraft = '', instructions = '';
     const success = status => res.status(200).json({ ok: true, status });
     try {
       if (callback) {
@@ -39,6 +39,8 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
           return success('expired_action');
         }
         ({ videoId, format } = action);
+        variant = action.variant || '';
+        if (variant) previousDraft = String(message.text || '').slice(0, 3900);
       }
       for (const [key, time] of seen) if (now() - time > 300000) seen.delete(key);
       const updateId = req.body?.update_id;
@@ -51,6 +53,7 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
       const command = text.match(/^\/(\w+)(?:@\w+)?(?:\s|$)/)?.[1]?.toLowerCase();
       if (!callback) {
         if (command === 'start' || command === 'help') { await sendText(token, chatId, HELP, io); return success('help'); }
+        if (command === 'examples') { await sendText(token, chatId, EXAMPLES, io); return success('examples'); }
         if (command === 'privacy') { await sendText(token, chatId, PRIVACY, io); return success('privacy'); }
         if (!text) { await sendText(token, chatId, 'Please send one YouTube video or Shorts link as text. Voice notes and uploaded videos are not analysed yet. Use /help for examples.', io); return success('unsupported_input'); }
         if (command === 'download') {
@@ -64,19 +67,30 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
           await sendPermittedVideo(token, chatId, verdict.url, 'Permitted media relay', io);
           return success('sent');
         }
-        if (command && !['analyze', ...Object.keys(FORMATS)].includes(command)) {
+        if (command === 'rewrite' || command === 'export') {
+          const draft = repliedDraft(message, token);
+          if (!draft) { await sendText(token, chatId, 'Reply directly to one of my complete generated drafts with /export or /rewrite followed by editing instructions.', io); return success('reply_required'); }
+          if (command === 'export') { await sendDocument(token, chatId, draft.text, io); return success('exported'); }
+          instructions = text.replace(/^\/rewrite(?:@\w+)?\s*/i, '').trim();
+          if (!instructions || instructions.length > 500) { await sendText(token, chatId, 'Add 1–500 characters of editing instructions after /rewrite, for example: Make it friendlier and finish with a question.', io); return success('invalid_instructions'); }
+          previousDraft = draft.text; format = draft.format; videoId = extractYouTubeId(draft.source);
+        }
+        if (command && !['analyze', 'rewrite', ...Object.keys(VARIANTS), ...Object.keys(FORMATS)].includes(command)) {
           await sendText(token, chatId, 'I do not recognise that command. Paste a YouTube link to choose a format, or use /help.', io);
           return success('unknown_command');
         }
-        const urls = text.match(/https?:\/\/[^\s<>]+/gi) || [];
-        if (urls.length > 1) { await sendText(token, chatId, 'Please send one video at a time so each draft has a clear source.', io); return success('multiple_links'); }
-        videoId = extractYouTubeId(firstUrl(text));
-        if (!videoId) { await sendText(token, chatId, 'Send a YouTube watch or Shorts link, for example:\nhttps://www.youtube.com/watch?v=VIDEO_ID\n\nPaste the link alone to choose a format, or put /analyze before it for a caption.', io); return success('invalid_link'); }
-        if (!command) {
-          await sendText(token, chatId, 'What would you like to create?\n\nChoose a format below. Drafts use public video metadata and need editorial review.', io, { reply_markup: formatKeyboard(videoId, userId, secret, now()) });
-          return success('choose_format');
+        if (!previousDraft) {
+          const urls = text.match(/https?:\/\/[^\s<>]+/gi) || [];
+          if (urls.length > 1) { await sendText(token, chatId, 'Please send one video at a time so each draft has a clear source.', io); return success('multiple_links'); }
+          videoId = extractYouTubeId(firstUrl(text));
+          if (!videoId) { await sendText(token, chatId, 'Send a YouTube watch or Shorts link, for example:\nhttps://www.youtube.com/watch?v=VIDEO_ID\n\nPaste the link alone to choose a format, or put /analyze before it for a caption.', io); return success('invalid_link'); }
+          if (!command) {
+            await sendText(token, chatId, 'What would you like to create?\n\nChoose a format below. Drafts use public video metadata and need editorial review.', io, { reply_markup: formatKeyboard(videoId, userId, secret, now()) });
+            return success('choose_format');
+          }
+          variant = Object.hasOwn(VARIANTS, command || '') ? command : '';
+          format = command === 'analyze' || variant ? 'caption' : command;
         }
-        format = command === 'analyze' ? 'caption' : command;
       }
       if (busy.has(userId)) { await sendText(token, chatId, 'Your previous draft is still being prepared. Please wait for it to finish, then choose another format.', io); return success('busy'); }
       busy.add(userId); generating = true;
@@ -94,10 +108,10 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
         apiKey: env.GROQ_API_KEY || '', model: env.GROQ_MODEL || 'openai/gpt-oss-120b',
         niche: env.ACCOUNT_NICHE || 'chiropractic education, posture, mobility and spine health',
         tone: env.ACCOUNT_TONE || 'educational, curious, concise and non-diagnostic',
-        hashtagCount: Number(env.HASHTAG_COUNT || 8), format, fetchImpl: boundedFetch(io, 15000)
+        hashtagCount: Number(env.HASHTAG_COUNT || 8), format, variant, previousDraft, instructions, fetchImpl: boundedFetch(io, 15000)
       });
       stage = 'delivery';
-      await sendText(token, chatId, formatDraft(metadata, content, format), io, { reply_markup: formatKeyboard(videoId, userId, secret, now(), content) });
+      await sendText(token, chatId, formatDraft(metadata, content, format), io, { reply_markup: formatKeyboard(videoId, userId, secret, now(), { ...content, format }) });
       if (progressId) await editText(token, chatId, progressId, `${sourceSummary(metadata)}\n\n✓ Draft ready below.`, io).catch(() => {});
       return success('generated');
     } catch {

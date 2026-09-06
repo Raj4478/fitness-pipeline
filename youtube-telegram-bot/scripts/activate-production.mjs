@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { COMMANDS } from '../src/experience.js';
 const env = process.env;
 async function telegram(method, payload) {
   const response = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`, {
@@ -28,6 +29,11 @@ try {
   await telegram('setWebhook', { url: endpoint, secret_token: env.TELEGRAM_WEBHOOK_SECRET, allowed_updates: ['message', 'callback_query'], drop_pending_updates: false });
   const info = await telegram('getWebhookInfo', {});
   if (info.url !== endpoint || !info.allowed_updates?.includes('callback_query')) throw new Error('Webhook registration verification failed');
+  const scope = { type: 'chat', chat_id: Number(env.TELEGRAM_ALLOWED_USER_ID) };
+  await telegram('setMyCommands', { commands: COMMANDS, scope });
+  await telegram('setChatMenuButton', { chat_id: scope.chat_id, menu_button: { type: 'commands' } });
+  const commands = await telegram('getMyCommands', { scope });
+  if (!COMMANDS.every(expected => commands.some(actual => actual.command === expected.command))) throw new Error('Command menu verification failed');
   const bot = await telegram('getMe', {});
   console.log(JSON.stringify({ live: true, version: health.version, endpoint, bot: bot.username, pendingUpdates: info.pending_update_count }));
 } catch {

@@ -59,3 +59,14 @@ export function splitText(text, maxLength = 3900) {
   if (remaining) chunks.push(remaining);
   return chunks;
 }
+
+export async function sendDocument(token, chatId, text, fetchImpl = fetch) {
+  const form = new FormData();
+  form.set('chat_id', String(chatId));
+  form.set('document', new Blob([text], { type: 'text/plain;charset=utf-8' }), 'chiro-draft.txt');
+  form.set('caption', 'Your draft, including source credit and review notes.');
+  const response = await boundedFetch(fetchImpl, 5000)(`${TELEGRAM_API}/bot${token}/sendDocument`, { method: 'POST', body: form });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.ok !== true) throw new Error('document_delivery_failed');
+  return data.result;
+}
