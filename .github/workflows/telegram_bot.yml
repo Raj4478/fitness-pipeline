@@ -1,8 +1,6 @@
 name: Telegram Bot Command Handler
 
 on:
-  repository_dispatch:
-    types: [telegram_command]
   workflow_dispatch:
     inputs:
       topic:
