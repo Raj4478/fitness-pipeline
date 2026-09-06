@@ -61,7 +61,14 @@ export default async function handler(req, res) {
     }
 
     await sendText(token, chatId, 'Analyzing the YouTube link…');
-    const metadata = await fetchYouTubeMetadata(url, { apiKey: process.env.YOUTUBE_API_KEY || '' });
+    const metadata = await fetchYouTubeMetadata(url, {
+      apiKey: process.env.YOUTUBE_API_KEY || '',
+      oauth: {
+        clientId: process.env.YOUTUBE_CLIENT_ID || '',
+        clientSecret: process.env.YOUTUBE_CLIENT_SECRET || '',
+        refreshToken: process.env.YOUTUBE_REFRESH_TOKEN || ''
+      }
+    });
     const content = await generateContent(metadata, {
       apiKey: process.env.GROQ_API_KEY || '',
       model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
