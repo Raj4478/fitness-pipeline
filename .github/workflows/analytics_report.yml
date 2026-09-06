@@ -1,9 +1,6 @@
 name: Daily Analytics Report
 
 on:
-  schedule:
-    # Every day at 8 AM IST (2:30 AM UTC)
-    - cron: '30 2 * * *'
   workflow_dispatch:
 
 jobs:
