@@ -10,7 +10,9 @@ Send the bot a YouTube video or Shorts link and it analyzes the available public
 - Identifies the source video and channel
 - Uses YouTube metadata for content context
 - Reuses the repository's existing YouTube OAuth credentials for richer metadata when available
-- Uses Groq to generate an original hook, caption, hashtags, and content angle
+- Offers Caption, Hook ideas, Reel script and Carousel buttons
+- Uses Groq to generate structured drafts with source attribution and review notes
+- Shows progress, format actions and a copy-opening-hook button
 - Adds source attribution
 - Uses conservative, non-diagnostic language for health-adjacent content
 - Restricts the Telegram bot to the configured user ID
@@ -24,7 +26,7 @@ Send the bot a YouTube video or Shorts link and it analyzes the available public
 /help
 ```
 
-You can also paste a YouTube URL directly without using `/analyze`.
+Paste a YouTube URL directly to choose a format. See [the upgrade notes](youtube-telegram-bot/UX-UPGRADE.md) for setup changes and limitations.
 
 ## Architecture
 

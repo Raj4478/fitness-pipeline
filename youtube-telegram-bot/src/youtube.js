@@ -70,22 +70,27 @@ export async function fetchYouTubeMetadata(
 
     const headers = { Accept: 'application/json' };
     if (authorization) headers.Authorization = authorization;
-    const apiResponse = await fetchImpl(apiUrl, { headers });
+    try {
+      const apiResponse = await fetchImpl(apiUrl, { headers });
 
-    if (apiResponse.ok) {
-      const payload = await apiResponse.json();
-      const item = payload.items?.[0];
-      if (item) {
-        result.title = item.snippet?.title || result.title;
-        result.channelTitle = item.snippet?.channelTitle || result.channelTitle;
-        result.description = item.snippet?.description || '';
-        result.publishedAt = item.snippet?.publishedAt || '';
-        result.tags = Array.isArray(item.snippet?.tags) ? item.snippet.tags.slice(0, 30) : [];
-        result.duration = item.contentDetails?.duration || '';
-        result.viewCount = item.statistics?.viewCount || '';
-        result.thumbnailUrl = item.snippet?.thumbnails?.high?.url || item.snippet?.thumbnails?.medium?.url || result.thumbnailUrl;
+      if (apiResponse.ok) {
+        const payload = await apiResponse.json();
+        const item = payload.items?.[0];
+        if (!item) result.analysisDepth = 'oembed-fallback';
+        if (item) {
+          result.title = item.snippet?.title || result.title;
+          result.channelTitle = item.snippet?.channelTitle || result.channelTitle;
+          result.description = item.snippet?.description || '';
+          result.publishedAt = item.snippet?.publishedAt || '';
+          result.tags = Array.isArray(item.snippet?.tags) ? item.snippet.tags.slice(0, 30) : [];
+          result.duration = item.contentDetails?.duration || '';
+          result.viewCount = item.statistics?.viewCount || '';
+          result.thumbnailUrl = item.snippet?.thumbnails?.high?.url || item.snippet?.thumbnails?.medium?.url || result.thumbnailUrl;
+        }
+      } else {
+        result.analysisDepth = 'oembed-fallback';
       }
-    } else {
+    } catch {
       result.analysisDepth = 'oembed-fallback';
     }
   }
