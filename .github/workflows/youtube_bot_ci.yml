@@ -1,0 +1,21 @@
+name: YouTube Telegram Bot CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'youtube-telegram-bot/**'
+      - '.github/workflows/youtube_bot_ci.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: youtube-telegram-bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
