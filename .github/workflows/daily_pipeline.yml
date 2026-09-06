@@ -1,13 +1,6 @@
 name: Daily FitFacts Video Generator
 
 on:
-  schedule:
-    # 6 AM IST = 12:30 AM UTC (pre-workout morning peak)
-    - cron: '30 0 * * *'
-    # 10 AM IST = 4:30 AM UTC (post-breakfast peak)
-    - cron: '30 4 * * *'
-    # 9 PM IST = 3:30 PM UTC (prime time evening peak)
-    - cron: '30 15 * * *'
   workflow_dispatch:
     inputs:
       topic:
