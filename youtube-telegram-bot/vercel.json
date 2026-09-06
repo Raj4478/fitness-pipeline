@@ -1,4 +1,5 @@
 {
+  "outputDirectory": "public",
   "functions": {
     "api/telegram.js": {
       "maxDuration": 30

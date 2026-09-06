@@ -4,21 +4,27 @@ Standalone webhook service for a new chiropractic-themed social account. It does
 
 ## What it does
 
-Send a YouTube video or Shorts link to the Telegram bot and it returns:
+Send a YouTube video or Shorts link, choose Caption, Hook ideas, Reel script or Carousel using inline buttons, and receive a draft with:
 
 - video title + source channel
 - an original hook
 - an original chiropractic/posture/mobility caption
 - configurable hashtags
 - a suggested content angle
-- a medical-safety note
+- an editorial review note (not medical fact-checking)
 - a source-attribution line
 
 Commands:
 
-- `/analyze <youtube-url>` — analyze explicitly (plain pasted YouTube links also work)
+- `/analyze <youtube-url>` or `/caption <youtube-url>` — draft a caption immediately
+- `/hooks <youtube-url>` — five hook ideas
+- `/reel <youtube-url>` — a 30-second script outline
+- `/carousel <youtube-url>` — five slide outlines
+- `/privacy` — input handling and retention information
 - `/download <direct-media-url>` — relay an allowlisted HTTPS video you own/have permission to use
 - `/help`
+
+Progress messages explain what is happening. Drafts include a source link, a copy-opening-hook button and buttons for another format. Without `GROQ_API_KEY`, output is labelled STARTER TEMPLATE. The bot does not watch footage, read transcripts or validate medical claims.
 
 ## Download policy
 
@@ -65,11 +71,11 @@ GitHub Actions secrets and Vercel project environment variables are separate sto
 - `YOUTUBE_CLIENT_ID` — existing YouTube OAuth client ID
 - `YOUTUBE_CLIENT_SECRET` — existing YouTube OAuth client secret
 - `YOUTUBE_REFRESH_TOKEN` — existing YouTube OAuth refresh token
-- `TELEGRAM_WEBHOOK_SECRET` — recommended new random webhook authentication secret; optional in code
+- `TELEGRAM_WEBHOOK_SECRET` — required random webhook authentication secret
 - `WEBHOOK_URL` — deployed Vercel origin, e.g. `https://your-project.vercel.app`
 - `GROQ_MODEL` — defaults to `openai/gpt-oss-120b`
 - `YOUTUBE_API_KEY` — optional alternative to OAuth
-- `ACCOUNT_NICHE`, `ACCOUNT_TONE`, `HASHTAG_COUNT` — content strategy controls
+- `ACCOUNT_NICHE`, `ACCOUNT_TONE`, `HASHTAG_COUNT` — content strategy controls; hashtags default to 8, clamped to 1–15
 - `DOWNLOAD_ALLOWLIST_HOSTS` — comma-separated media hosts you control/have permission to relay
 
 ## Deploy on Vercel
@@ -82,7 +88,7 @@ After the production URL and environment variables are configured, register the 
 npm run set-webhook
 ```
 
-The command registers `${WEBHOOK_URL}/api/telegram`. When `TELEGRAM_WEBHOOK_SECRET` is set, the webhook request is authenticated with that secret.
+The command registers `${WEBHOOK_URL}/api/telegram`. The secret and allowed private user ID are mandatory. Register the webhook again after upgrading to receive `callback_query` updates for the buttons. Pending updates are preserved; set `DROP_PENDING_UPDATES=true` only if you explicitly intend to discard them.
 
 ## Content safety
 
@@ -100,4 +106,6 @@ The Groq prompt is deliberately conservative for health-adjacent content:
 npm test
 ```
 
-Tests cover YouTube URL recognition, OAuth-backed metadata retrieval, and the rights-gated download policy.
+Tests mock external APIs and cover format callbacks, authentication, concurrency, output validation, fallback behavior, source retrieval and permitted-media rules.
+
+See [UX-UPGRADE.md](UX-UPGRADE.md) for research, rollout requirements and limitations.

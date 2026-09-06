@@ -1,27 +1,37 @@
+import { boundedFetch } from './network.js';
 const TELEGRAM_API = 'https://api.telegram.org';
 
 export async function telegramCall(token, method, payload, fetchImpl = fetch) {
-  const response = await fetchImpl(`${TELEGRAM_API}/bot${token}/${method}`, {
+  const response = await boundedFetch(fetchImpl, 5000)(`${TELEGRAM_API}/bot${token}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || data.ok === false) {
-    throw new Error(`Telegram ${method} failed: ${response.status} ${data.description || ''}`.trim());
+    const error = new Error(`telegram_${response.status}`);
+    error.code = 'telegram_error';
+    throw error;
   }
   return data.result;
 }
 
-export async function sendText(token, chatId, text, fetchImpl = fetch) {
+export async function sendText(token, chatId, text, fetchImpl = fetch, options = {}) {
   const chunks = splitText(String(text), 3900);
-  for (const chunk of chunks) {
-    await telegramCall(token, 'sendMessage', {
+  let result;
+  for (const [index, chunk] of chunks.entries()) {
+    result = await telegramCall(token, 'sendMessage', {
       chat_id: chatId,
       text: chunk,
-      disable_web_page_preview: false
+      link_preview_options: { is_disabled: true },
+      ...(index === chunks.length - 1 ? options : {})
     }, fetchImpl);
   }
+  return result;
+}
+
+export function editText(token, chatId, messageId, text, fetchImpl = fetch, options = {}) {
+  return telegramCall(token, 'editMessageText', { chat_id: chatId, message_id: messageId, text, link_preview_options: { is_disabled: true }, ...options }, fetchImpl);
 }
 
 export async function sendPermittedVideo(token, chatId, mediaUrl, caption = '', fetchImpl = fetch) {
@@ -34,6 +44,7 @@ export async function sendPermittedVideo(token, chatId, mediaUrl, caption = '', 
 }
 
 export function splitText(text, maxLength = 3900) {
+  if (!Number.isInteger(maxLength) || maxLength < 2) throw new Error('invalid_chunk_length');
   if (text.length <= maxLength) return [text];
   const chunks = [];
   let remaining = text;
@@ -41,6 +52,7 @@ export function splitText(text, maxLength = 3900) {
     let cut = remaining.lastIndexOf('\n', maxLength);
     if (cut < maxLength * 0.6) cut = remaining.lastIndexOf(' ', maxLength);
     if (cut <= 0) cut = maxLength;
+    if (/[\uD800-\uDBFF]/.test(remaining[cut - 1])) cut--;
     chunks.push(remaining.slice(0, cut).trim());
     remaining = remaining.slice(cut).trim();
   }
