@@ -4,7 +4,7 @@ Standalone webhook service for a new chiropractic-themed social account. It does
 
 ## What it does
 
-Send a YouTube video or Shorts link, choose Caption, Hook ideas, Reel script or Carousel using inline buttons, and receive a draft with:
+Send a YouTube video or Shorts link, choose Caption, Hook ideas, Reel script, Carousel, Story sequence or Title ideas using inline buttons, and receive a draft with:
 
 - video title + source channel
 - an original hook
@@ -109,3 +109,13 @@ npm test
 Tests mock external APIs and cover format callbacks, authentication, concurrency, output validation, fallback behavior, source retrieval and permitted-media rules.
 
 See [UX-UPGRADE.md](UX-UPGRADE.md) for research, rollout requirements and limitations.
+
+## Telegram tools in 0.3.0
+
+- `/stories <link>` creates three Story frames; `/titles <link>` creates title and thumbnail-text ideas.
+- `/hindi <link>`, `/hinglish <link>` and `/short <link>` create caption variants. Drafts also have language and shortening buttons that preserve their original format. These choices apply per draft, not as saved preferences.
+- Reply directly to a bot draft with `/rewrite Make it friendlier` to revise that draft. Instructions are limited to 500 characters. The draft and instructions are sent to Groq with the source metadata.
+- Reply with `/export` to receive a UTF-8 text file containing the draft, attribution and review notes. No model call or persistent file storage is used for export.
+- `/examples` shows workflows. Deployment registers a command menu for the configured private user.
+
+The new Telegram integrations follow the [official Bot API](https://core.telegram.org/bots/api) for command menus and multipart document uploads. Language versions and rewrites require a configured model; they do not silently fall back to an English template.

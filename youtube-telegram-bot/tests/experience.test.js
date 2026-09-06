@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHandler } from '../api/telegram.js';
 import { generateContent } from '../src/content.js';
-import { makeAction, readAction, FORMATS, formatKeyboard } from '../src/experience.js';
+import { makeAction, readAction, FORMATS, formatKeyboard, formatDraft, repliedDraft, COMMANDS } from '../src/experience.js';
 import { splitText } from '../src/telegram.js';
 import { fetchYouTubeMetadata } from '../src/youtube.js';
 const env = { TELEGRAM_BOT_TOKEN: 'test-token', TELEGRAM_ALLOWED_USER_ID: '42', TELEGRAM_WEBHOOK_SECRET: 'test-secret' };
@@ -10,7 +10,7 @@ const metadata = { title: 'Movement discussion', channelTitle: 'Creator', canoni
 const draft = { hook: 'An opening question', caption: 'A draft for review.', hashtags: ['#movement'], angle: 'Education', caution: 'Review metadata-only draft.', generationMode: 'ai' };
 function fixture(overrides = {}) {
   const calls = [];
-  const handler = createHandler({ env, fetchImpl: async (url, options) => { calls.push({ method: String(url).split('/').pop(), ...JSON.parse(options.body) }); return { ok: true, json: async () => ({ ok: true, result: { message_id: calls.length } }) }; }, metadataFn: async () => metadata, generateFn: async () => draft, ...overrides });
+  const handler = createHandler({ env, fetchImpl: async (url, options) => { calls.push({ method: String(url).split('/').pop(), ...(options.body instanceof FormData ? { document: options.body.get('document') } : JSON.parse(options.body)) }); return { ok: true, json: async () => ({ ok: true, result: { message_id: calls.length } }) }; }, metadataFn: async () => metadata, generateFn: async () => draft, ...overrides });
   async function run(body, headers = { 'x-telegram-bot-api-secret-token': env.TELEGRAM_WEBHOOK_SECRET }) {
     const res = { status(code) { this.code = code; return this; }, json(data) { this.data = data; return this; } };
     await handler({ method: 'POST', headers, body }, res); return res;
@@ -112,4 +112,73 @@ test('edited messages are ignored and multiple links do not start generation', a
   const f = fixture({ generateFn: () => assert.fail('must not generate') });
   assert.equal((await f.run({ edited_message: message('/analyze ' + metadata.canonicalUrl).message })).data.ignored, true);
   assert.equal((await f.run(message(metadata.canonicalUrl + ' ' + metadata.canonicalUrl))).data.status, 'multiple_links');
+});
+
+const replyBody = (command) => {
+  const body = message(command);
+  body.message.reply_to_message = { from: { id: 'test-token', is_bot: true }, text: formatDraft(metadata, draft, 'reel') };
+  return body;
+};
+test('reply rewrite carries the selected draft and editing instructions into generation', async () => {
+  let options;
+  const f = fixture({ generateFn: async (_, input) => { options = input; return draft; } });
+  assert.equal((await f.run(replyBody('/rewrite Make it friendlier'))).data.status, 'generated');
+  assert.equal(options.format, 'reel'); assert.equal(options.instructions, 'Make it friendlier');
+  assert.match(options.previousDraft, /REEL SCRIPT/);
+});
+test('export produces an exact UTF-8 document without a model or metadata call', async () => {
+  const f = fixture({ generateFn: () => assert.fail('no model call'), metadataFn: () => assert.fail('no metadata call') });
+  const body = replyBody('/export');
+  body.message.reply_to_message.text = body.message.reply_to_message.text.replace(draft.caption, 'नमस्ते 👋');
+  assert.equal((await f.run(body)).data.status, 'exported');
+  assert.equal(f.calls[0].method, 'sendDocument');
+  assert.equal(await f.calls[0].document.text(), body.message.reply_to_message.text);
+});
+test('replies to humans, other bots and forwarded drafts cannot be rewritten or exported', async () => {
+  for (const change of [{ from: { id: 'test-token', is_bot: false } }, { from: { id: 'other', is_bot: true } }, { forward_origin: { type: 'user' } }]) {
+    const f = fixture({ generateFn: () => assert.fail('no generation') });
+    const body = replyBody('/export'); Object.assign(body.message.reply_to_message, change);
+    assert.equal((await f.run(body)).data.status, 'reply_required');
+  }
+});
+test('rewrite rejects missing or oversized instructions before generation', async () => {
+  for (const command of ['/rewrite', '/rewrite ' + 'x'.repeat(501)]) {
+    const f = fixture({ generateFn: () => assert.fail('no generation') });
+    assert.equal((await f.run(replyBody(command))).data.status, 'invalid_instructions');
+  }
+});
+for (const variant of ['hindi', 'hinglish', 'short']) test(`${variant} works as a shortcut and a signed refinement button`, async () => {
+  let selected;
+  const f = fixture({ generateFn: async (_, options) => { selected = options; return draft; } });
+  assert.equal((await f.run(message('/' + variant + ' ' + metadata.canonicalUrl))).data.status, 'generated');
+  assert.equal(selected.variant, variant); assert.equal(selected.format, 'caption');
+  const data = makeAction('abcdef12345', 'carousel~' + variant, 42, env.TELEGRAM_WEBHOOK_SECRET);
+  assert.ok(Buffer.byteLength(data) <= 64);
+  const body = { update_id: 2, callback_query: { id: 'query', from: { id: 42 }, data, message: { chat: { id: 42, type: 'private' }, text: formatDraft(metadata, draft, 'carousel') } } };
+  assert.equal((await f.run(body)).data.status, 'generated');
+  assert.equal(selected.format, 'carousel'); assert.equal(selected.variant, variant); assert.match(selected.previousDraft, /CAROUSEL OUTLINE/);
+});
+test('all signed refinement payloads fit Telegram byte limits and reject tampering', () => {
+  for (const format of Object.keys(FORMATS)) for (const variant of ['hindi', 'hinglish', 'short']) {
+    const action = makeAction('a'.repeat(20), `${format}~${variant}`, 42, 'secret');
+    assert.ok(Buffer.byteLength(action) <= 64);
+    assert.equal(readAction(action, 42, 'secret').variant, variant);
+    assert.equal(readAction(action.replace(variant, 'invalid'), 42, 'secret'), null);
+  }
+});
+test('AI rewrite requests separate draft content from trusted editing constraints', async () => {
+  let request;
+  await generateContent(metadata, { apiKey: 'test', variant: 'hindi', previousDraft: 'old draft', instructions: 'make friendlier', fetchImpl: async (_, options) => {
+    request = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(draft) } }] }) };
+  } });
+  assert.match(request.messages[0].content, /Devanagari/);
+  const input = JSON.parse(request.messages[1].content);
+  assert.equal(input.previousDraft, 'old draft'); assert.equal(input.editingRequest, 'make friendlier');
+  await assert.rejects(generateContent(metadata, { variant: 'hindi' }), /generation_not_configured/);
+});
+test('command menu entries are valid and include the new workflows', () => {
+  assert.equal(new Set(COMMANDS.map(c => c.command)).size, COMMANDS.length);
+  assert.ok(COMMANDS.every(c => /^[a-z_]{1,32}$/.test(c.command) && c.description.length <= 256));
+  assert.ok(COMMANDS.some(c => c.command === 'rewrite')); assert.ok(COMMANDS.some(c => c.command === 'export'));
 });

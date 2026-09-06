@@ -44,3 +44,7 @@ This remains a private metadata-to-content assistant. It has no transcript inges
 Duplicate-update suppression and the busy indicator are best-effort within a warm serverless instance and reset on cold starts. Duplicate IDs expire after five minutes. Signed buttons survive cold starts. Requests have a 22-second shared network deadline and up to five seconds for an error response; slow providers may require another attempt. Exactly-once generation/delivery is not guaranteed.
 
 Next, build a reviewed evaluation set across the four formats, then add saved drafts and durable jobs if usage justifies storage. Measure time to first useful draft, completion rate and how often outputs require substantial editing. Add opt-in feedback with a clear retention policy. Do not describe the bot as clinically validated or as having watched source footage.
+
+## Version 0.3.0
+
+Added Story sequences, title ideas, per-draft Hindi/Hinglish/shortening, reply-based rewriting, text export and a verified command menu. All 35 mocked tests pass. Reply workflows accept complete drafts from this bot in the configured private chat, not forwarded drafts or other senders. Exports preserve source and review notes. Provider-generated translations and rewrites still need editorial review; no multilingual quality benchmark has been completed.
