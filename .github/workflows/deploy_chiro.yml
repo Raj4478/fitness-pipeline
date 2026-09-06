@@ -1,0 +1,50 @@
+name: Deploy Chiro Studio
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chiro-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: youtube-telegram-bot
+    env:
+      VERCEL_ORG_ID: ${{ vars.CHIRO_VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.CHIRO_VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.CHIRO_VERCEL_TOKEN }}
+      WEBHOOK_URL: ${{ vars.CHIRO_WEBHOOK_URL }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
+      TELEGRAM_WEBHOOK_SECRET: ${{ secrets.CHIRO_WEBHOOK_SECRET }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+      YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+      YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+      YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
+      - name: Configure production environment
+        run: node scripts/configure-production.mjs
+      - name: Install deployment CLI
+        run: npm install --global vercel@48.9.0
+      - name: Build production artifact
+        run: |
+          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          vercel build --prod --token="$VERCEL_TOKEN"
+      - name: Deploy production artifact
+        run: vercel deploy --prebuilt --prod --yes --token="$VERCEL_TOKEN"
+      - name: Check live endpoint and register webhook
+        run: node scripts/activate-production.mjs

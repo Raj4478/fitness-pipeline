@@ -26,6 +26,10 @@ These are design decisions based on platform capabilities, not evidence of measu
 
 ## Upgrade and verification
 
+The manual **Deploy Chiro Studio** GitHub Actions workflow runs tests, transfers the existing bot/provider secrets to encrypted production variables, builds and deploys, then verifies the live version and webhook authentication before registering Telegram. It preserves pending updates and does not send a test message. It does not run the legacy fitness workflows.
+
+Deployment setup uses repository variables `CHIRO_VERCEL_ORG_ID`, `CHIRO_VERCEL_PROJECT_ID`, `CHIRO_WEBHOOK_URL` and secrets `CHIRO_VERCEL_TOKEN`, `CHIRO_WEBHOOK_SECRET`. Refresh the deployment credential if it expires or is revoked. Never put token values in workflow files. Only `public/` is published as static content; application source is packaged into the function.
+
 - Runtime: Node 20.3 or newer; no new npm dependencies.
 - Required: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`, `TELEGRAM_WEBHOOK_SECRET`. Missing values return 503; wrong webhook secrets return 401. Only the configured user's private chat is served.
 - Set `GROQ_API_KEY` for AI drafts. Otherwise labelled starter templates are intentional.
