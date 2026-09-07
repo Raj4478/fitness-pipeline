@@ -11,7 +11,7 @@ export function validateDownloadUrl(input, allowHosts = []) {
 
   if (url.protocol !== 'https:') return { ok: false, reason: 'https_required' };
   if (YOUTUBE_HOSTS.has(url.hostname.toLowerCase())) {
-    return { ok: false, reason: 'youtube_download_not_supported' };
+    return { ok: true, url: url.toString(), mode: 'youtube_worker' };
   }
 
   const normalizedAllowHosts = allowHosts.map((host) => String(host).trim().toLowerCase()).filter(Boolean);
@@ -23,7 +23,7 @@ export function validateDownloadUrl(input, allowHosts = []) {
   const extension = [...MEDIA_EXTENSIONS].find((ext) => path.endsWith(ext));
   if (!extension) return { ok: false, reason: 'unsupported_media_type' };
 
-  return { ok: true, url: url.toString(), extension };
+  return { ok: true, url: url.toString(), extension, mode: 'direct_relay' };
 }
 
 export function parseAllowHosts(value = '') {
