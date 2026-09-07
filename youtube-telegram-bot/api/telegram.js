@@ -1,16 +1,20 @@
 import { extractYouTubeId, fetchYouTubeMetadata } from '../src/youtube.js';
 import { generateContent } from '../src/content.js';
 import { parseAllowHosts, validateDownloadUrl } from '../src/download-policy.js';
+import { hasRightsAcknowledgement, queueAuthorizedDownload } from '../src/download-dispatch.js';
 import { sendPermittedVideo, sendDocument, sendText, editText, telegramCall } from '../src/telegram.js';
-import { HELP, PRIVACY, FORMATS, VARIANTS, EXAMPLES, repliedDraft, firstUrl, readAction, formatKeyboard, sourceSummary, formatDraft } from '../src/experience.js';
+import { HELP, PRIVACY, FORMATS, VARIANTS, EXAMPLES, repliedDraft, firstUrl, readAction, readDownloadAction, downloadConfirmKeyboard, formatKeyboard, sourceSummary, formatDraft } from '../src/experience.js';
 import { boundedFetch } from '../src/network.js';
+
+const DOWNLOAD_CONFIRMATION = 'Only continue if you own this video or have permission to download and reuse it. The worker will not use cookies or bypass private, members-only, premium, sign-in, DRM, or geo restrictions.';
+const DOWNLOAD_QUEUED = '⬇️ Download queued. The on-demand yt-dlp worker will return an MP4 here if the source is accessible and the file can be kept within Telegram’s upload limit.';
 
 export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn = fetchYouTubeMetadata, generateFn = generateContent, now = Date.now } = {}) {
   // Best-effort duplicate suppression for a warm instance, not a durable job queue.
   const seen = new Map();
   const busy = new Set();
   return async function handler(req, res) {
-    if (req.method === 'GET') return res.status(200).json({ ok: true, service: 'youtube-telegram-chiro-bot', version: '0.3.0' });
+    if (req.method === 'GET') return res.status(200).json({ ok: true, service: 'youtube-telegram-chiro-bot', version: '0.4.0' });
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'method_not_allowed' });
     const token = env.TELEGRAM_BOT_TOKEN || '';
     const allowedUser = String(env.TELEGRAM_ALLOWED_USER_ID || '').trim();
@@ -33,6 +37,22 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
     try {
       if (callback) {
         await telegramCall(token, 'answerCallbackQuery', { callback_query_id: callback.id }, io);
+
+        const downloadAction = readDownloadAction(callback.data, userId, secret, now());
+        if (downloadAction) {
+          videoId = downloadAction.videoId;
+          if (downloadAction.phase === 'request') {
+            await sendText(token, chatId, DOWNLOAD_CONFIRMATION, io, {
+              reply_markup: downloadConfirmKeyboard(videoId, userId, secret, now())
+            });
+            return success('download_confirmation');
+          }
+          stage = 'download_dispatch';
+          await queueAuthorizedDownload(`https://www.youtube.com/watch?v=${videoId}`, { env, fetchImpl: io });
+          await sendText(token, chatId, DOWNLOAD_QUEUED, io);
+          return success('download_queued');
+        }
+
         const action = readAction(callback.data, userId, secret, now());
         if (!action) {
           await sendText(token, chatId, 'That button has expired or is unavailable. Paste the YouTube link again to choose a format.', io);
@@ -42,6 +62,7 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
         variant = action.variant || '';
         if (variant) previousDraft = String(message.text || '').slice(0, 3900);
       }
+
       for (const [key, time] of seen) if (now() - time > 300000) seen.delete(key);
       const updateId = req.body?.update_id;
       if (Number.isSafeInteger(updateId)) {
@@ -49,6 +70,7 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
         if (seen.size >= 500) seen.delete(seen.keys().next().value);
         seen.set(updateId, now());
       }
+
       const text = String(message.text || message.caption || '').trim();
       const command = text.match(/^\/(\w+)(?:@\w+)?(?:\s|$)/)?.[1]?.toLowerCase();
       if (!callback) {
@@ -56,17 +78,33 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
         if (command === 'examples') { await sendText(token, chatId, EXAMPLES, io); return success('examples'); }
         if (command === 'privacy') { await sendText(token, chatId, PRIVACY, io); return success('privacy'); }
         if (!text) { await sendText(token, chatId, 'Please send one YouTube video or Shorts link as text. Voice notes and uploaded videos are not analysed yet. Use /help for examples.', io); return success('unsupported_input'); }
+
         if (command === 'download') {
-          const verdict = validateDownloadUrl(firstUrl(text), parseAllowHosts(env.DOWNLOAD_ALLOWLIST_HOSTS));
+          const sourceUrl = firstUrl(text);
+          const verdict = validateDownloadUrl(sourceUrl, parseAllowHosts(env.DOWNLOAD_ALLOWLIST_HOSTS));
           if (!verdict.ok) {
-            await sendText(token, chatId, verdict.reason === 'youtube_download_not_supported'
-              ? 'YouTube links can be used for content drafts. To relay your own video, use a permitted direct media link from your configured storage host.'
-              : 'That media link is unavailable for relay. Send a direct HTTPS video link from your configured storage host. Use /help for the content-drafting options.', io);
+            await sendText(token, chatId, 'That media link is unavailable for relay. Send a valid YouTube link, or a direct HTTPS video link from your configured storage host.', io);
             return success('download_blocked');
           }
+
+          if (verdict.mode === 'youtube_worker') {
+            videoId = extractYouTubeId(verdict.url);
+            if (!hasRightsAcknowledgement(text)) {
+              await sendText(token, chatId, DOWNLOAD_CONFIRMATION, io, {
+                reply_markup: downloadConfirmKeyboard(videoId, userId, secret, now())
+              });
+              return success('download_confirmation');
+            }
+            stage = 'download_dispatch';
+            await queueAuthorizedDownload(verdict.url, { env, fetchImpl: io });
+            await sendText(token, chatId, DOWNLOAD_QUEUED, io);
+            return success('download_queued');
+          }
+
           await sendPermittedVideo(token, chatId, verdict.url, 'Permitted media relay', io);
           return success('sent');
         }
+
         if (command === 'rewrite' || command === 'export') {
           const draft = repliedDraft(message, token);
           if (!draft) { await sendText(token, chatId, 'Reply directly to one of my complete generated drafts with /export or /rewrite followed by editing instructions.', io); return success('reply_required'); }
@@ -85,13 +123,14 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
           videoId = extractYouTubeId(firstUrl(text));
           if (!videoId) { await sendText(token, chatId, 'Send a YouTube watch or Shorts link, for example:\nhttps://www.youtube.com/watch?v=VIDEO_ID\n\nPaste the link alone to choose a format, or put /analyze before it for a caption.', io); return success('invalid_link'); }
           if (!command) {
-            await sendText(token, chatId, 'What would you like to create?\n\nChoose a format below. Drafts use public video metadata and need editorial review.', io, { reply_markup: formatKeyboard(videoId, userId, secret, now()) });
+            await sendText(token, chatId, 'What would you like to create?\n\nChoose a content format or download the video if you have permission to reuse it.', io, { reply_markup: formatKeyboard(videoId, userId, secret, now()) });
             return success('choose_format');
           }
           variant = Object.hasOwn(VARIANTS, command || '') ? command : '';
           format = command === 'analyze' || variant ? 'caption' : command;
         }
       }
+
       if (busy.has(userId)) { await sendText(token, chatId, 'Your previous draft is still being prepared. Please wait for it to finish, then choose another format.', io); return success('busy'); }
       busy.add(userId); generating = true;
       const progress = await sendText(token, chatId, `Preparing your ${FORMATS[format].label.toLowerCase()}…\n1/2 · Reading public video details.`, io);
@@ -117,13 +156,15 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
     } catch {
       // Never log or echo provider payloads, source descriptions, user text or token-bearing URLs.
       console.error(JSON.stringify({ event: 'chiro_request_failed', stage }));
-      const message = stage === 'metadata'
+      const errorMessage = stage === 'metadata'
         ? 'I could not read that video’s public details. Check that it is public and the link opens, then try again.'
-        : 'Your draft could not be completed this time. Please try again in a moment.';
-      const recovery = videoId ? { reply_markup: formatKeyboard(videoId, userId, secret, now()) } : {};
+        : stage === 'download_dispatch'
+          ? 'I could not queue the download worker. Check the GitHub Actions token/repository configuration and try again.'
+          : 'Your draft could not be completed this time. Please try again in a moment.';
+      const recovery = videoId && stage !== 'download_dispatch' ? { reply_markup: formatKeyboard(videoId, userId, secret, now()) } : {};
       await (progressId
-        ? editText(token, chatId, progressId, message, fetchImpl, recovery)
-        : sendText(token, chatId, message, fetchImpl, recovery)).catch(() => {});
+        ? editText(token, chatId, progressId, errorMessage, fetchImpl, recovery)
+        : sendText(token, chatId, errorMessage, fetchImpl, recovery)).catch(() => {});
       return success('handled_error');
     } finally {
       if (generating) busy.delete(userId);
