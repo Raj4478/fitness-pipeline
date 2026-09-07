@@ -1,0 +1,24 @@
+name: Telegram yt-dlp Integration CI Once
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/telegram_ytdlp_ci_once.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run Telegram bot tests
+        working-directory: youtube-telegram-bot
+        run: npm test
+      - name: Validate yt-dlp worker source
+        run: python -m py_compile youtube-telegram-bot/scripts/download_youtube.py
