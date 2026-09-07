@@ -1,0 +1,38 @@
+name: Authorized YouTube Download Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Authorized YouTube URL to download'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: authorized-youtube-download
+  cancel-in-progress: false
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      YOUTUBE_URL: ${{ inputs.url }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
+      DOWNLOAD_MAX_DURATION_SECONDS: '900'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install downloader runtime
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg
+          python -m pip install --disable-pip-version-check -U --pre "yt-dlp[default]" requests
+      - name: Download and return video to Telegram
+        run: python youtube-telegram-bot/scripts/download_youtube.py
