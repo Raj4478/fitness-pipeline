@@ -1,5 +1,7 @@
 import { boundedFetch } from './network.js';
+import { queueAuthorizedDownload } from './download-dispatch.js';
 const TELEGRAM_API = 'https://api.telegram.org';
+const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be']);
 
 export async function telegramCall(token, method, payload, fetchImpl = fetch) {
   const response = await boundedFetch(fetchImpl, 5000)(`${TELEGRAM_API}/bot${token}/${method}`, {
@@ -35,6 +37,17 @@ export function editText(token, chatId, messageId, text, fetchImpl = fetch, opti
 }
 
 export async function sendPermittedVideo(token, chatId, mediaUrl, caption = '', fetchImpl = fetch) {
+  let host = '';
+  try { host = new URL(mediaUrl).hostname.toLowerCase(); } catch {}
+  if (YOUTUBE_HOSTS.has(host)) {
+    await queueAuthorizedDownload(mediaUrl, { env: process.env, fetchImpl });
+    return sendText(
+      token,
+      chatId,
+      '⬇️ Download queued. This command is for videos you own or are authorized to reuse. The worker will return an MP4 here if the source is accessible and fits Telegram’s upload limit.',
+      fetchImpl
+    );
+  }
   return telegramCall(token, 'sendVideo', {
     chat_id: chatId,
     video: mediaUrl,
