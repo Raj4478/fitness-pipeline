@@ -1,57 +1,61 @@
 # Chiro YouTube Telegram Bot
 
-A private, Telegram-first content assistant for a chiropractic-focused social account.
+A private Telegram-first assistant for a chiropractic-focused social account.
 
-Send the bot a YouTube video or Shorts link and it analyzes the available public video metadata, then generates original social copy tailored to chiropractic education, posture, mobility, and spine-health content.
+Send a YouTube video or Shorts link to generate original captions, hooks, Reel scripts, carousel/story ideas, or—when you own the media or have permission to reuse it—request an on-demand video download.
 
 ## What it does
 
-- Accepts YouTube and YouTube Shorts links through Telegram
-- Identifies the source video and channel
-- Uses YouTube metadata for content context
-- Reuses the repository's existing YouTube OAuth credentials for richer metadata when available
-- Offers Caption, Hook ideas, Reel script and Carousel buttons
-- Uses Groq to generate structured drafts with source attribution and review notes
-- Shows progress, format actions and a copy-opening-hook button
-- Adds source attribution
-- Uses conservative, non-diagnostic language for health-adjacent content
+- Accepts YouTube and Shorts links through Telegram
+- Uses YouTube public metadata for content context
+- Reuses the existing YouTube OAuth credentials
+- Uses Groq for original chiropractic/posture/mobility social drafts
 - Restricts the Telegram bot to the configured user ID
-- Supports permitted direct-media relay for media you own or are authorized to reuse
+- Supports `/download <youtube-url>` through an on-demand upstream `yt-dlp` worker
+- Supports allowlisted direct-media relay
+- Keeps the legacy fitness/Twitter schedules disabled
 
 ## Telegram commands
 
 ```text
 /analyze <youtube-url>
-/download <permitted-direct-media-url>
+/hooks <youtube-url>
+/reel <youtube-url>
+/carousel <youtube-url>
+/stories <youtube-url>
+/titles <youtube-url>
+/download <youtube-or-direct-media-url>
 /help
 ```
 
-Paste a YouTube URL directly to choose a format. See [the upgrade notes](youtube-telegram-bot/UX-UPGRADE.md) for setup changes and limitations.
+Using `/download` is intended only for media you own or are authorized to reuse.
 
 ## Architecture
 
 ```text
-Telegram
-   │
-   ▼
-Webhook API
-   │
-   ├── YouTube oEmbed / YouTube Data API
-   │
-   ├── Groq content generation
-   │
-   └── Telegram response
+Content:
+Telegram → Vercel webhook → YouTube metadata → Groq → Telegram
+
+Authorized download:
+Telegram /download → Vercel webhook → GitHub Actions workflow_dispatch
+                  → yt-dlp + ffmpeg → MP4 → Telegram
 ```
 
-The production bot service lives in:
+The download workflow is manual/on-demand only. There is no cron or polling trigger.
 
-```text
-youtube-telegram-bot/
-```
+## yt-dlp worker
+
+The worker:
+
+- uses upstream `yt-dlp/yt-dlp`
+- does not configure cookies, login credentials, proxies, or geo bypass
+- rejects private/sign-in-gated, members-only, premium-only, and live content
+- uses no-playlist behavior and downloads one video only
+- defaults to a 15-minute maximum duration
+- prefers 720p and falls back to 480p/360p
+- enforces a 49 MB ceiling so the resulting file can fit Telegram's hosted Bot API upload limit
 
 ## Existing credentials reused
-
-The service is designed to reuse the repository's existing secret names:
 
 ```text
 TELEGRAM_BOT_TOKEN
@@ -60,42 +64,28 @@ GROQ_API_KEY
 YOUTUBE_CLIENT_ID
 YOUTUBE_CLIENT_SECRET
 YOUTUBE_REFRESH_TOKEN
+GH_ACTIONS_TOKEN
 ```
 
-Additional deployment-specific configuration may include:
+The webhook also uses:
 
 ```text
 TELEGRAM_WEBHOOK_SECRET
-WEBHOOK_URL
-GROQ_MODEL
-ACCOUNT_NICHE
-ACCOUNT_TONE
-HASHTAG_COUNT
-DOWNLOAD_ALLOWLIST_HOSTS
+GITHUB_REPO
+GITHUB_DEFAULT_BRANCH
 ```
 
-Never commit secret values to the repository.
+GitHub Actions secrets and Vercel environment variables are separate stores. Never commit secret values.
 
-## Content profile
+## Project location
 
-Default niche:
+The active service lives in:
 
 ```text
-chiropractic education, posture, mobility and spine health
+youtube-telegram-bot/
 ```
 
-The generator is intentionally instructed to avoid:
-
-- diagnosing a person from a video clip
-- guaranteed treatment or cure claims
-- invented medical facts
-- presenting educational social content as individualized medical advice
-
-## Download policy
-
-The bot does not extract arbitrary video files from YouTube.
-
-`/download` is limited to explicitly permitted direct media URLs from allowlisted hosts for media you own or have permission to reuse.
+See [`youtube-telegram-bot/README.md`](youtube-telegram-bot/README.md) for deployment, commands, download guardrails, and environment configuration.
 
 ## Local development
 
@@ -104,26 +94,6 @@ cd youtube-telegram-bot
 npm test
 ```
 
-The Node.js test suite covers YouTube URL parsing, metadata authentication behavior, and download-policy guardrails.
-
-## Deployment
-
-The bot is designed as a webhook service and can be deployed with the repository root configured to:
-
-```text
-youtube-telegram-bot
-```
-
-After deployment, configure the environment variables in the hosting platform and register the deployed `/api/telegram` endpoint as the Telegram webhook.
-
 ## Legacy pipeline
 
-This repository originally contained the FitFacts fitness-content pipeline. Its automatic GitHub Actions schedules have been disabled. The chiropractic YouTube/Telegram bot is the active direction of the project.
-
-## Status
-
-- Telegram credentials: validated
-- Groq credentials: validated
-- YouTube OAuth refresh flow: validated
-- Bot tests: passing
-- Legacy automatic fitness workflows: disabled
+This repository originally contained the FitFacts fitness-content pipeline. Its automatic GitHub Actions schedules remain disabled.
