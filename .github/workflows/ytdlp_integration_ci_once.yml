@@ -1,0 +1,22 @@
+name: yt-dlp Integration CI Once
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - '.github/workflows/ytdlp_integration_ci_once.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: youtube-telegram-bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm test
+      - name: Validate worker syntax
+        run: python -m py_compile scripts/download_youtube.py
