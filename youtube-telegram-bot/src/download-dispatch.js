@@ -26,7 +26,7 @@ export async function queueAuthorizedDownload(url, {
     throw error;
   }
 
-  const normalizedChatId = String(chatId || '').trim();
+  const normalizedChatId = String(chatId ?? env.TELEGRAM_ALLOWED_USER_ID ?? '0').trim();
   if (!/^\d+$/.test(normalizedChatId)) {
     const error = new Error('invalid_chat_id');
     error.code = 'invalid_chat_id';
