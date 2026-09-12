@@ -1,6 +1,6 @@
 # Chiro Studio — YouTube + Instagram → Telegram
 
-Private Telegram-first assistant for a chiropractic-focused social account. Paste a YouTube/Shorts link to create original captions, hooks, Reel scripts, carousel/story ideas, or paste a public Instagram Reel URL to queue an on-demand yt-dlp download and receive the MP4 back in the same Telegram chat.
+Private Telegram-first assistant for a chiropractic-focused social account. Paste a YouTube/Shorts link to create original captions, hooks, Reel scripts, carousel/story ideas, or paste a public Instagram Reel URL to queue an on-demand yt-dlp download and receive the MP4 back in the private Telegram bot.
 
 ## Commands
 
@@ -19,7 +19,7 @@ Private Telegram-first assistant for a chiropractic-focused social account. Past
 /privacy
 ```
 
-For Instagram, the fastest workflow is simply to paste one public Reel URL. The bot validates the URL, dispatches the GitHub Actions worker, and returns the downloaded MP4 to the originating private chat. Downloads are intended for media you own or are authorized to reuse.
+For Instagram, the fastest workflow is simply to paste one public Reel URL. The bot validates the URL, dispatches the GitHub Actions worker, and returns the downloaded MP4 to the configured private Telegram user. Downloads are intended for media you own or are authorized to reuse.
 
 ## Architecture
 
@@ -39,7 +39,7 @@ Telegram
                         ├── fallback 480p
                         └── fallback 360p
                                │
-                               └── Telegram MP4
+                               └── configured Telegram user
 ```
 
 The download worker is `.github/workflows/youtube_download_worker.yml`. Despite the legacy filename, it now handles supported public YouTube URLs and public Instagram Reel URLs. It runs only on demand and has no schedule.
@@ -89,18 +89,19 @@ TELEGRAM_BOT_TOKEN
 TELEGRAM_ALLOWED_USER_ID
 ```
 
-GitHub Actions secrets and Vercel environment variables are separate stores. If the webhook is deployed on Vercel, `GH_ACTIONS_TOKEN` must also be configured in that Vercel project; never commit its value.
+The Telegram destination is never passed as a public workflow input; the worker resolves it only from the `TELEGRAM_ALLOWED_USER_ID` Actions secret. GitHub Actions secrets and Vercel environment variables are separate stores. If the webhook is deployed on Vercel, `GH_ACTIONS_TOKEN` must also be configured in that Vercel project; never commit its value.
 
 ## Instagram Reel flow
 
 ```text
 1. Send https://www.instagram.com/reel/<shortcode>/ to the private Telegram bot.
 2. The Vercel webhook verifies the Telegram webhook secret and allowed user.
-3. The webhook triggers `youtube_download_worker.yml` with the normalized Reel URL and originating chat ID.
-4. GitHub Actions installs the current pre-release yt-dlp runtime plus ffmpeg.
-5. yt-dlp attempts the public Reel without cookies or login credentials.
-6. The worker posts the MP4 to the same Telegram chat if it can keep the file below the Bot API upload limit.
-7. The GitHub runner's temporary directory is deleted automatically when the job ends.
+3. The webhook triggers `youtube_download_worker.yml` with the normalized Reel URL only.
+4. GitHub Actions reads the destination from the `TELEGRAM_ALLOWED_USER_ID` secret.
+5. GitHub Actions installs the current pre-release yt-dlp runtime plus ffmpeg.
+6. yt-dlp attempts the public Reel without cookies or login credentials.
+7. The worker posts the MP4 to the configured private Telegram user if it can keep the file below the Bot API upload limit.
+8. The GitHub runner's temporary directory is deleted automatically when the job ends.
 ```
 
 ## Development
