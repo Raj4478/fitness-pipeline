@@ -110,16 +110,10 @@ def download_at_height(url: str, directory: Path, height: int, provider: str) ->
 def main() -> int:
     url = os.environ.get("MEDIA_URL", os.environ.get("YOUTUBE_URL", "")).strip()
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    allowed_user = os.environ.get("TELEGRAM_ALLOWED_USER_ID", "").strip()
+    chat_id = os.environ.get("TELEGRAM_ALLOWED_USER_ID", "").strip()
     max_duration = int(os.environ.get("DOWNLOAD_MAX_DURATION_SECONDS", "900"))
 
-    if (
-        not token
-        or not re.fullmatch(r"\d+", chat_id)
-        or not re.fullmatch(r"\d+", allowed_user)
-        or chat_id != allowed_user
-    ):
+    if not token or not re.fullmatch(r"\d+", chat_id):
         print("worker configuration incomplete", file=sys.stderr)
         return 2
 
