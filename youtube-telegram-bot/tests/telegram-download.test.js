@@ -44,7 +44,7 @@ function message(text, updateId = 1) {
 }
 
 function callback(data, updateId = 2) {
-  return { update_id: updateId, callback_query: { id: `q-${updateId}`, from: { id: 42 }, data, message: { chat: { id: 42, type: 'private' } } };
+  return { update_id: updateId, callback_query: { id: `q-${updateId}`, from: { id: 42 }, data, message: { chat: { id: 42, type: 'private' } } } };
 }
 
 test('pasted YouTube link keyboard contains a signed Download video button', () => {
