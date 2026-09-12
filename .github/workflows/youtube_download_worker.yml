@@ -1,10 +1,14 @@
-name: Authorized YouTube Download Worker
+name: Authorized Media Download Worker
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'Authorized YouTube URL to download'
+        description: 'Authorized public YouTube or Instagram Reel URL to download'
+        required: true
+        type: string
+      chat_id:
+        description: 'Telegram chat that requested the download'
         required: true
         type: string
 
@@ -12,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: authorized-youtube-download
+  group: authorized-media-download-${{ inputs.chat_id }}
   cancel-in-progress: false
 
 jobs:
@@ -20,7 +24,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      YOUTUBE_URL: ${{ inputs.url }}
+      MEDIA_URL: ${{ inputs.url }}
+      TELEGRAM_CHAT_ID: ${{ inputs.chat_id }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
       DOWNLOAD_MAX_DURATION_SECONDS: '900'
