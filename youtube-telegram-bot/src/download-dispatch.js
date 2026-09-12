@@ -15,7 +15,6 @@ export function resolveGitHubRepo(env = process.env) {
 }
 
 export async function queueAuthorizedDownload(url, {
-  chatId,
   env = process.env,
   fetchImpl = fetch
 } = {}) {
@@ -23,13 +22,6 @@ export async function queueAuthorizedDownload(url, {
   if (!verdict.ok || !['youtube_worker', 'instagram_worker'].includes(verdict.mode)) {
     const error = new Error('invalid_worker_url');
     error.code = 'invalid_worker_url';
-    throw error;
-  }
-
-  const normalizedChatId = String(chatId ?? env.TELEGRAM_ALLOWED_USER_ID ?? '0').trim();
-  if (!/^\d+$/.test(normalizedChatId)) {
-    const error = new Error('invalid_chat_id');
-    error.code = 'invalid_chat_id';
     throw error;
   }
 
@@ -53,7 +45,7 @@ export async function queueAuthorizedDownload(url, {
     },
     body: JSON.stringify({
       ref: branch,
-      inputs: { url: verdict.url, chat_id: normalizedChatId }
+      inputs: { url: verdict.url }
     }),
     signal: AbortSignal.timeout(5000)
   });
