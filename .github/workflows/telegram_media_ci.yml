@@ -1,0 +1,37 @@
+name: Telegram Media Bot CI
+
+on:
+  push:
+    branches:
+      - master
+      - feature/instagram-reel-telegram-downloader
+    paths:
+      - 'youtube-telegram-bot/**'
+      - '.github/workflows/youtube_download_worker.yml'
+      - '.github/workflows/telegram_media_ci.yml'
+  pull_request:
+    paths:
+      - 'youtube-telegram-bot/**'
+      - '.github/workflows/youtube_download_worker.yml'
+      - '.github/workflows/telegram_media_ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run Telegram bot unit tests
+        working-directory: youtube-telegram-bot
+        run: npm test
+      - name: Validate yt-dlp worker source
+        run: python -m py_compile youtube-telegram-bot/scripts/download_youtube.py
