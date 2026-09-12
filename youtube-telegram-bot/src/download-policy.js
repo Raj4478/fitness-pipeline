@@ -1,4 +1,6 @@
 const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be']);
+const INSTAGRAM_HOSTS = new Set(['instagram.com', 'www.instagram.com']);
+const INSTAGRAM_REEL_PATH = /^\/reels?\/[^/]+\/?$/i;
 const MEDIA_EXTENSIONS = new Set(['.mp4', '.mov', '.m4v', '.webm']);
 
 export function validateDownloadUrl(input, allowHosts = []) {
@@ -10,12 +12,23 @@ export function validateDownloadUrl(input, allowHosts = []) {
   }
 
   if (url.protocol !== 'https:') return { ok: false, reason: 'https_required' };
-  if (YOUTUBE_HOSTS.has(url.hostname.toLowerCase())) {
+  const host = url.hostname.toLowerCase();
+
+  if (YOUTUBE_HOSTS.has(host)) {
     return { ok: true, url: url.toString(), mode: 'youtube_worker' };
   }
 
-  const normalizedAllowHosts = allowHosts.map((host) => String(host).trim().toLowerCase()).filter(Boolean);
-  if (!normalizedAllowHosts.length || !normalizedAllowHosts.includes(url.hostname.toLowerCase())) {
+  if (INSTAGRAM_HOSTS.has(host)) {
+    if (!INSTAGRAM_REEL_PATH.test(url.pathname)) {
+      return { ok: false, reason: 'unsupported_instagram_url' };
+    }
+    url.search = '';
+    url.hash = '';
+    return { ok: true, url: url.toString(), mode: 'instagram_worker' };
+  }
+
+  const normalizedAllowHosts = allowHosts.map((value) => String(value).trim().toLowerCase()).filter(Boolean);
+  if (!normalizedAllowHosts.length || !normalizedAllowHosts.includes(host)) {
     return { ok: false, reason: 'host_not_allowlisted' };
   }
 
