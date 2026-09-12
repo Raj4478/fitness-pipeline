@@ -44,7 +44,7 @@ function message(text, updateId = 1) {
 }
 
 function callback(data, updateId = 2) {
-  return { update_id: updateId, callback_query: { id: `q-${updateId}`, from: { id: 42 }, data, message: { chat: { id: 42, type: 'private' } } } };
+  return { update_id: updateId, callback_query: { id: `q-${updateId}`, from: { id: 42 }, data, message: { chat: { id: 42, type: 'private' } } };
 }
 
 test('pasted YouTube link keyboard contains a signed Download video button', () => {
@@ -77,9 +77,21 @@ test('signed rights confirmation queues GitHub yt-dlp worker exactly once', asyn
   assert.equal(dispatches.length, 1);
   assert.match(dispatches[0].url, /youtube_download_worker\.yml\/dispatches$/);
   assert.equal(dispatches[0].body.inputs.url, source);
+  assert.equal(dispatches[0].body.inputs.chat_id, '42');
   assert.equal(dispatches[0].body.ref, 'master');
   assert.equal(dispatches[0].authorization, 'Bearer gh-secret');
   assert.ok(!JSON.stringify(dispatches[0].body).includes('gh-secret'));
+});
+
+test('plain Instagram Reel URL immediately queues the worker for the same chat', async () => {
+  const f = fixture();
+  const res = await f.run(message('https://www.instagram.com/reel/ABC123/?igsh=tracking', 9));
+  assert.equal(res.data.status, 'download_queued');
+  const dispatches = f.calls.filter(call => call.type === 'github');
+  assert.equal(dispatches.length, 1);
+  assert.equal(dispatches[0].body.inputs.url, 'https://www.instagram.com/reel/ABC123/');
+  assert.equal(dispatches[0].body.inputs.chat_id, '42');
+  assert.equal(f.calls.some(call => call.type === 'telegram' && call.body.text?.includes('Instagram Reel queued')), true);
 });
 
 test('/download YouTube command requires confirmation unless --authorized is present', async () => {
