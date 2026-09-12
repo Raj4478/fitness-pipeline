@@ -7,16 +7,12 @@ on:
         description: 'Authorized public YouTube or Instagram Reel URL to download'
         required: true
         type: string
-      chat_id:
-        description: 'Telegram chat that requested the download'
-        required: true
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: authorized-media-download-${{ inputs.chat_id }}
+  group: authorized-media-download
   cancel-in-progress: false
 
 jobs:
@@ -25,7 +21,6 @@ jobs:
     timeout-minutes: 10
     env:
       MEDIA_URL: ${{ inputs.url }}
-      TELEGRAM_CHAT_ID: ${{ inputs.chat_id }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
       DOWNLOAD_MAX_DURATION_SECONDS: '900'
