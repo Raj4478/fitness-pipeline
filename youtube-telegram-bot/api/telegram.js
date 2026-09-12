@@ -8,13 +8,13 @@ import { boundedFetch } from '../src/network.js';
 
 const DOWNLOAD_CONFIRMATION = 'Only continue if you own this video or have permission to download and reuse it. The worker will not use cookies or bypass private, members-only, premium, sign-in, DRM, or geo restrictions.';
 const DOWNLOAD_QUEUED = '⬇️ Download queued. The on-demand yt-dlp worker will return an MP4 here if the source is accessible and the file can be kept within Telegram’s upload limit.';
+const INSTAGRAM_DOWNLOAD_QUEUED = '⬇️ Instagram Reel queued. I’ll return the MP4 here if the Reel is public, accessible without login, and fits Telegram’s upload limit.';
 
 export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn = fetchYouTubeMetadata, generateFn = generateContent, now = Date.now } = {}) {
-  // Best-effort duplicate suppression for a warm instance, not a durable job queue.
   const seen = new Map();
   const busy = new Set();
   return async function handler(req, res) {
-    if (req.method === 'GET') return res.status(200).json({ ok: true, service: 'youtube-telegram-chiro-bot', version: '0.4.0' });
+    if (req.method === 'GET') return res.status(200).json({ ok: true, service: 'youtube-instagram-telegram-chiro-bot', version: '0.5.0' });
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'method_not_allowed' });
     const token = env.TELEGRAM_BOT_TOKEN || '';
     const allowedUser = String(env.TELEGRAM_ALLOWED_USER_ID || '').trim();
@@ -48,7 +48,7 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
             return success('download_confirmation');
           }
           stage = 'download_dispatch';
-          await queueAuthorizedDownload(`https://www.youtube.com/watch?v=${videoId}`, { env, fetchImpl: io });
+          await queueAuthorizedDownload(`https://www.youtube.com/watch?v=${videoId}`, { chatId, env, fetchImpl: io });
           await sendText(token, chatId, DOWNLOAD_QUEUED, io);
           return success('download_queued');
         }
@@ -77,14 +77,21 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
         if (command === 'start' || command === 'help') { await sendText(token, chatId, HELP, io); return success('help'); }
         if (command === 'examples') { await sendText(token, chatId, EXAMPLES, io); return success('examples'); }
         if (command === 'privacy') { await sendText(token, chatId, PRIVACY, io); return success('privacy'); }
-        if (!text) { await sendText(token, chatId, 'Please send one YouTube video or Shorts link as text. Voice notes and uploaded videos are not analysed yet. Use /help for examples.', io); return success('unsupported_input'); }
+        if (!text) { await sendText(token, chatId, 'Please send one YouTube video, Shorts link, or public Instagram Reel URL as text. Use /help for examples.', io); return success('unsupported_input'); }
 
         if (command === 'download') {
           const sourceUrl = firstUrl(text);
           const verdict = validateDownloadUrl(sourceUrl, parseAllowHosts(env.DOWNLOAD_ALLOWLIST_HOSTS));
           if (!verdict.ok) {
-            await sendText(token, chatId, 'That media link is unavailable for relay. Send a valid YouTube link, or a direct HTTPS video link from your configured storage host.', io);
+            await sendText(token, chatId, 'That media link is unavailable for relay. Send a valid YouTube link, public Instagram Reel, or a direct HTTPS video link from your configured storage host.', io);
             return success('download_blocked');
+          }
+
+          if (verdict.mode === 'instagram_worker') {
+            stage = 'download_dispatch';
+            await queueAuthorizedDownload(verdict.url, { chatId, env, fetchImpl: io });
+            await sendText(token, chatId, INSTAGRAM_DOWNLOAD_QUEUED, io);
+            return success('download_queued');
           }
 
           if (verdict.mode === 'youtube_worker') {
@@ -96,7 +103,7 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
               return success('download_confirmation');
             }
             stage = 'download_dispatch';
-            await queueAuthorizedDownload(verdict.url, { env, fetchImpl: io });
+            await queueAuthorizedDownload(verdict.url, { chatId, env, fetchImpl: io });
             await sendText(token, chatId, DOWNLOAD_QUEUED, io);
             return success('download_queued');
           }
@@ -114,14 +121,22 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
           previousDraft = draft.text; format = draft.format; videoId = extractYouTubeId(draft.source);
         }
         if (command && !['analyze', 'rewrite', ...Object.keys(VARIANTS), ...Object.keys(FORMATS)].includes(command)) {
-          await sendText(token, chatId, 'I do not recognise that command. Paste a YouTube link to choose a format, or use /help.', io);
+          await sendText(token, chatId, 'I do not recognise that command. Paste a YouTube link to choose a format, paste an Instagram Reel to download it, or use /help.', io);
           return success('unknown_command');
         }
         if (!previousDraft) {
           const urls = text.match(/https?:\/\/[^\s<>]+/gi) || [];
-          if (urls.length > 1) { await sendText(token, chatId, 'Please send one video at a time so each draft has a clear source.', io); return success('multiple_links'); }
-          videoId = extractYouTubeId(firstUrl(text));
-          if (!videoId) { await sendText(token, chatId, 'Send a YouTube watch or Shorts link, for example:\nhttps://www.youtube.com/watch?v=VIDEO_ID\n\nPaste the link alone to choose a format, or put /analyze before it for a caption.', io); return success('invalid_link'); }
+          if (urls.length > 1) { await sendText(token, chatId, 'Please send one video at a time.', io); return success('multiple_links'); }
+          const sourceUrl = firstUrl(text);
+          const downloadVerdict = validateDownloadUrl(sourceUrl, parseAllowHosts(env.DOWNLOAD_ALLOWLIST_HOSTS));
+          if (!command && downloadVerdict.ok && downloadVerdict.mode === 'instagram_worker') {
+            stage = 'download_dispatch';
+            await queueAuthorizedDownload(downloadVerdict.url, { chatId, env, fetchImpl: io });
+            await sendText(token, chatId, INSTAGRAM_DOWNLOAD_QUEUED, io);
+            return success('download_queued');
+          }
+          videoId = extractYouTubeId(sourceUrl);
+          if (!videoId) { await sendText(token, chatId, 'Send a YouTube watch/Shorts link for content generation, or paste a public Instagram Reel URL to download it.', io); return success('invalid_link'); }
           if (!command) {
             await sendText(token, chatId, 'What would you like to create?\n\nChoose a content format or download the video if you have permission to reuse it.', io, { reply_markup: formatKeyboard(videoId, userId, secret, now()) });
             return success('choose_format');
@@ -154,13 +169,12 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
       if (progressId) await editText(token, chatId, progressId, `${sourceSummary(metadata)}\n\n✓ Draft ready below.`, io).catch(() => {});
       return success('generated');
     } catch {
-      // Never log or echo provider payloads, source descriptions, user text or token-bearing URLs.
       console.error(JSON.stringify({ event: 'chiro_request_failed', stage }));
       const errorMessage = stage === 'metadata'
         ? 'I could not read that video’s public details. Check that it is public and the link opens, then try again.'
         : stage === 'download_dispatch'
           ? 'I could not queue the download worker. Check the GitHub Actions token/repository configuration and try again.'
-          : 'Your draft could not be completed this time. Please try again in a moment.';
+          : 'Your request could not be completed this time. Please try again in a moment.';
       const recovery = videoId && stage !== 'download_dispatch' ? { reply_markup: formatKeyboard(videoId, userId, secret, now()) } : {};
       await (progressId
         ? editText(token, chatId, progressId, errorMessage, fetchImpl, recovery)

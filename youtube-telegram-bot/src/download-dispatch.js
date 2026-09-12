@@ -1,4 +1,4 @@
-import { extractYouTubeId } from './youtube.js';
+import { validateDownloadUrl } from './download-policy.js';
 
 const WORKFLOW_FILE = 'youtube_download_worker.yml';
 
@@ -18,9 +18,10 @@ export async function queueAuthorizedDownload(url, {
   env = process.env,
   fetchImpl = fetch
 } = {}) {
-  if (!extractYouTubeId(url)) {
-    const error = new Error('invalid_youtube_url');
-    error.code = 'invalid_youtube_url';
+  const verdict = validateDownloadUrl(url, []);
+  if (!verdict.ok || !['youtube_worker', 'instagram_worker'].includes(verdict.mode)) {
+    const error = new Error('invalid_worker_url');
+    error.code = 'invalid_worker_url';
     throw error;
   }
 
@@ -44,7 +45,7 @@ export async function queueAuthorizedDownload(url, {
     },
     body: JSON.stringify({
       ref: branch,
-      inputs: { url: String(url) }
+      inputs: { url: verdict.url }
     }),
     signal: AbortSignal.timeout(5000)
   });
@@ -54,5 +55,5 @@ export async function queueAuthorizedDownload(url, {
     error.code = 'download_dispatch_failed';
     throw error;
   }
-  return { queued: true };
+  return { queued: true, mode: verdict.mode };
 }
