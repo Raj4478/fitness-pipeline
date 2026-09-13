@@ -12,6 +12,12 @@ import yt_dlp
 from yt_dlp.utils import DownloadError
 
 MAX_TELEGRAM_BYTES = 49 * 1024 * 1024
+VIDEO_HASHTAGS = (
+    "#PremanandJiMaharaj #premanandjimaharaj #PremanandJi #Vrindavan "
+    "#RadheRadhe #Bhakti #BhaktiReels #BhajanReels #SanatanDharma "
+    "#HareKrishna #RadhaKrishna #BankeBihari #Satsang #Pravachan "
+    "#ViralReels #TrendingReels #ExplorePage #ReelsIndia #SpiritualReels #KrishnaBhakti"
+)
 BLOCKED_AVAILABILITY = {"private", "premium_only", "subscriber_only", "needs_auth"}
 YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
 INSTAGRAM_HOSTS = {"instagram.com", "www.instagram.com"}
@@ -144,7 +150,7 @@ def main() -> int:
                         last_error = RuntimeError("telegram_size_limit")
                         continue
                     title = str(info.get("title") or provider)[:180]
-                    send_video(token, chat_id, path, f"✅ {title}\n{provider} · up to {height}p")
+                    send_video(token, chat_id, path, f"✅ {title}\n{provider} · up to {height}p\n\n{VIDEO_HASHTAGS}")
                     return 0
                 except (DownloadError, RuntimeError) as error:
                     last_error = error
