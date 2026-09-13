@@ -19,6 +19,7 @@ try {
   const health = await response.json();
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   if (!response.ok || !health.ok || health.version !== pkg.version) throw new Error('Production version health check failed');
+  if (!env.APP_COMMIT_SHA || health.commit !== env.APP_COMMIT_SHA) throw new Error('Production commit health check failed');
   const headers = { 'Content-Type': 'application/json', 'x-telegram-bot-api-secret-token': env.TELEGRAM_WEBHOOK_SECRET };
   // An empty update verifies configuration/authentication without sending a message.
   const accepted = await fetch(endpoint, { method: 'POST', headers, body: '{}', signal: AbortSignal.timeout(15000) });
@@ -28,14 +29,14 @@ try {
   if (rejected.status !== 401) throw new Error('Webhook authentication rejection probe failed');
   await telegram('setWebhook', { url: endpoint, secret_token: env.TELEGRAM_WEBHOOK_SECRET, allowed_updates: ['message', 'callback_query'], drop_pending_updates: false });
   const info = await telegram('getWebhookInfo', {});
-  if (info.url !== endpoint || !info.allowed_updates?.includes('callback_query')) throw new Error('Webhook registration verification failed');
+  if (info.url !== endpoint || !['message', 'callback_query'].every(type => info.allowed_updates?.includes(type))) throw new Error('Webhook registration verification failed');
   const scope = { type: 'chat', chat_id: Number(env.TELEGRAM_ALLOWED_USER_ID) };
   await telegram('setMyCommands', { commands: COMMANDS, scope });
   await telegram('setChatMenuButton', { chat_id: scope.chat_id, menu_button: { type: 'commands' } });
   const commands = await telegram('getMyCommands', { scope });
   if (!COMMANDS.every(expected => commands.some(actual => actual.command === expected.command))) throw new Error('Command menu verification failed');
   const bot = await telegram('getMe', {});
-  console.log(JSON.stringify({ live: true, version: health.version, endpoint, bot: bot.username, pendingUpdates: info.pending_update_count }));
+  console.log(JSON.stringify({ live: true, version: health.version, commit: health.commit, endpoint, bot: bot.username, pendingUpdates: info.pending_update_count }));
 } catch {
   console.error('Production activation failed. No provider payloads were logged. Check the deployment status and required configuration.');
   process.exit(1);

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { extractYouTubeId, fetchYouTubeMetadata } from '../src/youtube.js';
 import { generateContent } from '../src/content.js';
 import { parseAllowHosts, validateDownloadUrl } from '../src/download-policy.js';
@@ -9,12 +10,13 @@ import { boundedFetch } from '../src/network.js';
 const DOWNLOAD_CONFIRMATION = 'Only continue if you own this video or have permission to download and reuse it. The worker will not use cookies or bypass private, members-only, premium, sign-in, DRM, or geo restrictions.';
 const DOWNLOAD_QUEUED = '⬇️ Download queued. The on-demand yt-dlp worker will return an MP4 here if the source is accessible and the file can be kept within Telegram’s upload limit.';
 const INSTAGRAM_DOWNLOAD_QUEUED = '⬇️ Instagram Reel queued. I’ll return the MP4 here if the Reel is public, accessible without login, and fits Telegram’s upload limit.';
+const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 
 export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn = fetchYouTubeMetadata, generateFn = generateContent, now = Date.now } = {}) {
   const seen = new Map();
   const busy = new Set();
   return async function handler(req, res) {
-    if (req.method === 'GET') return res.status(200).json({ ok: true, service: 'youtube-instagram-telegram-chiro-bot', version: '0.5.0' });
+    if (req.method === 'GET') return res.status(200).json({ ok: true, service: 'youtube-instagram-telegram-chiro-bot', version, commit: env.APP_COMMIT_SHA || null });
     if (req.method !== 'POST') return res.status(405).json({ ok: false, error: 'method_not_allowed' });
     const token = env.TELEGRAM_BOT_TOKEN || '';
     const allowedUser = String(env.TELEGRAM_ALLOWED_USER_ID || '').trim();
