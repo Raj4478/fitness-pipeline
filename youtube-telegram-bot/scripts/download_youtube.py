@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import sys
@@ -13,11 +15,12 @@ import yt_dlp
 from yt_dlp.utils import DownloadError
 
 MAX_TELEGRAM_BYTES = 49 * 1024 * 1024
-VIDEO_HASHTAGS = (
-    "#PremanandJiMaharaj #premanandjimaharaj #PremanandJi #Vrindavan "
-    "#RadheRadhe #Bhakti #BhaktiReels #BhajanReels #SanatanDharma "
-    "#HareKrishna #RadhaKrishna #BankeBihari #Satsang #Pravachan "
-    "#ViralReels #TrendingReels #ExplorePage #ReelsIndia #SpiritualReels #KrishnaBhakti"
+PERMANENT_HASHTAG = "#PremanandJiMaharaj"
+ROTATING_HASHTAGS = (
+    "#PremanandJi", "#Vrindavan", "#RadheRadhe", "#Bhakti", "#BhaktiReels",
+    "#BhajanReels", "#SanatanDharma", "#HareKrishna", "#RadhaKrishna",
+    "#BankeBihari", "#Satsang", "#Pravachan", "#ViralReels", "#TrendingReels",
+    "#ExplorePage", "#ReelsIndia", "#SpiritualReels", "#KrishnaBhakti",
 )
 BLOCKED_AVAILABILITY = {"private", "premium_only", "subscriber_only", "needs_auth"}
 YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
@@ -37,7 +40,16 @@ def send_text(token: str, chat_id: str, text: str) -> None:
     response.raise_for_status()
 
 
-def send_video(token: str, chat_id: str, path: Path, caption: str) -> None:
+def video_hashtags(media_key: str) -> str:
+    digest = hashlib.sha256(media_key.encode("utf-8")).digest()
+    first = int.from_bytes(digest[:8], "big") % len(ROTATING_HASHTAGS)
+    second = int.from_bytes(digest[8:16], "big") % (len(ROTATING_HASHTAGS) - 1)
+    if second >= first:
+        second += 1
+    return " ".join((PERMANENT_HASHTAG, ROTATING_HASHTAGS[first], ROTATING_HASHTAGS[second]))
+
+
+def send_video(token: str, chat_id: str, path: Path, caption: str, hashtags: str) -> None:
     with ExitStack() as stack:
         handle = stack.enter_context(path.open("rb"))
         files = {"video": (path.name, handle, "video/mp4")}
@@ -45,6 +57,12 @@ def send_video(token: str, chat_id: str, path: Path, caption: str) -> None:
             "chat_id": chat_id,
             "caption": caption[:1000],
             "supports_streaming": "true",
+            "reply_markup": json.dumps({
+                "inline_keyboard": [[{
+                    "text": "📋 Copy hashtags",
+                    "copy_text": {"text": hashtags},
+                }]],
+            }, ensure_ascii=False, separators=(",", ":")),
         }
         if VIDEO_COVER.is_file() and VIDEO_THUMBNAIL.is_file():
             cover = stack.enter_context(VIDEO_COVER.open("rb"))
@@ -147,6 +165,7 @@ def main() -> int:
         send_text(token, chat_id, f"⬇️ {provider} download started. I’ll return the video here if it fits Telegram’s upload limit.")
 
         info = inspect_media(url)
+        hashtags = video_hashtags(url)
         availability = str(info.get("availability") or "").lower()
         if availability in BLOCKED_AVAILABILITY:
             raise RuntimeError("access_restricted_video")
@@ -169,7 +188,13 @@ def main() -> int:
                         last_error = RuntimeError("telegram_size_limit")
                         continue
                     title = str(info.get("title") or provider)[:180]
-                    send_video(token, chat_id, path, f"✅ {title}\n{provider} · up to {height}p\n\n{VIDEO_HASHTAGS}")
+                    send_video(
+                        token,
+                        chat_id,
+                        path,
+                        f"✅ {title}\n{provider} · up to {height}p\n\n{hashtags}",
+                        hashtags,
+                    )
                     return 0
                 except (DownloadError, RuntimeError) as error:
                     last_error = error
