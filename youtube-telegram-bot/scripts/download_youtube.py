@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import tempfile
+from contextlib import ExitStack
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -22,6 +23,9 @@ BLOCKED_AVAILABILITY = {"private", "premium_only", "subscriber_only", "needs_aut
 YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
 INSTAGRAM_HOSTS = {"instagram.com", "www.instagram.com"}
 INSTAGRAM_REEL_PATH = re.compile(r"^/reels?/[^/]+/?$", re.IGNORECASE)
+ASSET_DIRECTORY = Path(__file__).resolve().parent.parent / "assets"
+VIDEO_COVER = ASSET_DIRECTORY / "premanand-ji-maharaj-cover.jpg"
+VIDEO_THUMBNAIL = ASSET_DIRECTORY / "premanand-ji-maharaj-thumbnail.jpg"
 
 
 def send_text(token: str, chat_id: str, text: str) -> None:
@@ -34,11 +38,26 @@ def send_text(token: str, chat_id: str, text: str) -> None:
 
 
 def send_video(token: str, chat_id: str, path: Path, caption: str) -> None:
-    with path.open("rb") as handle:
+    with ExitStack() as stack:
+        handle = stack.enter_context(path.open("rb"))
+        files = {"video": (path.name, handle, "video/mp4")}
+        data = {
+            "chat_id": chat_id,
+            "caption": caption[:1000],
+            "supports_streaming": "true",
+        }
+        if VIDEO_COVER.is_file() and VIDEO_THUMBNAIL.is_file():
+            cover = stack.enter_context(VIDEO_COVER.open("rb"))
+            thumbnail = stack.enter_context(VIDEO_THUMBNAIL.open("rb"))
+            files.update({
+                "cover": (VIDEO_COVER.name, cover, "image/jpeg"),
+                "thumbnail": (VIDEO_THUMBNAIL.name, thumbnail, "image/jpeg"),
+            })
+            data.update({"cover": "attach://cover", "thumbnail": "attach://thumbnail"})
         response = requests.post(
             f"https://api.telegram.org/bot{token}/sendVideo",
-            data={"chat_id": chat_id, "caption": caption[:1000], "supports_streaming": "true"},
-            files={"video": (path.name, handle, "video/mp4")},
+            data=data,
+            files=files,
             timeout=180,
         )
     response.raise_for_status()
