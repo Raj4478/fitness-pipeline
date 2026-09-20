@@ -98,23 +98,50 @@ Source title: {title[:300]}
 Transcript:
 {transcript[:12000]}
 """
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["hook", "takeaway", "caption", "hashtags"],
+        "properties": {
+            "hook": {"type": "string"},
+            "takeaway": {"type": "string"},
+            "caption": {"type": "string"},
+            "hashtags": {"type": "array", "items": {"type": "string"}},
+        },
+    }
     response = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
         json={
             "model": GROQ_EDITOR_MODEL,
+            "reasoning_effort": "low",
+            "max_completion_tokens": 2200,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "reel_editorial",
+                    "strict": True,
+                    "schema": schema,
+                },
+            },
             "messages": [
-                {"role": "system", "content": "Return valid JSON only. Keep the wording respectful and grounded in the transcript."},
+                {
+                    "role": "system",
+                    "content": "Return only the requested structured editorial data. Keep wording respectful and grounded in the transcript.",
+                },
                 {"role": "user", "content": prompt},
             ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0.35,
-            "max_completion_tokens": 650,
         },
         timeout=90,
     )
-    response.raise_for_status()
-    data = json.loads(response.json()["choices"][0]["message"]["content"])
+    if not response.ok:
+        raise RuntimeError(
+            f"groq_editor_failed:{response.status_code}:{response.text[:800]}"
+        )
+    payload = response.json()
+    if payload.get("choices", [{}])[0].get("finish_reason") == "length":
+        raise RuntimeError("groq_editor_truncated")
+    data = json.loads(payload["choices"][0]["message"]["content"])
     fallback = video_hashtags(media_key)
     return {
         "hook": clean(data.get("hook"), 90) or "आज की इस बात को ध्यान से सुनिए",
