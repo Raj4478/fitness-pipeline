@@ -113,24 +113,93 @@ def hook_is_specific(hook: str) -> bool:
     )
 
 
-def transcript_fallback_hook(transcript: str) -> str:
-    topic_hooks = (
-        (("चिंता", "फिक्र", "परेशान"), "चिंता के समय मन को कैसे संभालें?"),
-        (("क्रोध", "गुस्सा"), "गुस्सा आते ही मन को कैसे संभालें?"),
-        (("अपमान", "बेइज्जती"), "अपमान होने पर हमें क्या करना चाहिए?"),
-        (("दुख", "दुःख", "उदासी"), "दुख के समय मन को कैसे संभालें?"),
-        (("विश्वास", "भरोसा"), "भगवान पर भरोसा कैसे मजबूत करें?"),
-        (("भक्ति",), "सच्ची भक्ति की पहचान क्या है?"),
-        (("नाम जप", "नामजप", "जप"), "नाम जप में मन कैसे लगाया जाए?"),
-        (("मोह", "आसक्ति"), "मोह और आसक्ति से कैसे बचें?"),
-        (("प्रेम", "रिश्त"), "रिश्तों में सही भाव कैसे रखा जाए?"),
-        (("मन", "शांति"), "मन को स्थिर और शांत कैसे रखें?"),
+def transcript_topic(transcript: str) -> dict:
+    topics = (
+        (("चिंता", "फिक्र", "परेशान"), {
+            "hook": "चिंता के समय मन को कैसे संभालें?",
+            "takeaway": "सीख: चिंता बढ़े तो मन को भगवान के स्मरण में टिकाकर धैर्य रखने का अभ्यास करें।",
+            "caption": "Premanand Ji Maharaj की इस वाणी में चिंता के समय मन को संभालने की सरल सीख सुनिए। 🙏",
+            "hashtags": ["#मनकीशांति", "#भक्ति"],
+        }),
+        (("क्रोध", "गुस्सा"), {
+            "hook": "गुस्सा आते ही मन को कैसे संभालें?",
+            "takeaway": "सीख: क्रोध के क्षण में प्रतिक्रिया रोककर मन को शांत करने का अभ्यास करें।",
+            "caption": "Premanand Ji Maharaj की इस वाणी में क्रोध के समय सही भाव बनाए रखने की सीख सुनिए। 🙏",
+            "hashtags": ["#क्रोध", "#मनकीशांति"],
+        }),
+        (("अपमान", "बेइज्जती"), {
+            "hook": "अपमान होने पर हमें क्या करना चाहिए?",
+            "takeaway": "सीख: अपमान के समय तुरंत प्रतिक्रिया देने के बजाय धैर्य और विनम्रता बनाए रखें।",
+            "caption": "Premanand Ji Maharaj की इस वाणी में अपमान के समय धैर्य रखने की सीख सुनिए। 🙏",
+            "hashtags": ["#धैर्य", "#भक्ति"],
+        }),
+        (("दुख", "दुःख", "उदासी"), {
+            "hook": "दुख के समय मन को कैसे संभालें?",
+            "takeaway": "सीख: दुख में भी स्मरण, धैर्य और सही दृष्टि बनाए रखने का अभ्यास करें।",
+            "caption": "Premanand Ji Maharaj की इस वाणी में दुख के समय मन को स्थिर रखने की सीख सुनिए। 🙏",
+            "hashtags": ["#मनकीशांति", "#आध्यात्म"],
+        }),
+        (("विश्वास", "भरोसा"), {
+            "hook": "भगवान पर भरोसा कैसे मजबूत करें?",
+            "takeaway": "सीख: कठिन परिस्थिति में भी विश्वास को अभ्यास और स्मरण से मजबूत करें।",
+            "caption": "Premanand Ji Maharaj की इस वाणी में भगवान पर विश्वास मजबूत करने की सीख सुनिए। 🙏",
+            "hashtags": ["#विश्वास", "#भक्ति"],
+        }),
+        (("भक्ति",), {
+            "hook": "सच्ची भक्ति की पहचान क्या है?",
+            "takeaway": "सीख: भक्ति केवल शब्दों में नहीं, भाव और आचरण में भी दिखाई देनी चाहिए।",
+            "caption": "Premanand Ji Maharaj की इस वाणी में सच्ची भक्ति के भाव को समझिए। 🙏",
+            "hashtags": ["#भक्ति", "#राधेराधे"],
+        }),
+        (("नाम जप", "नामजप", "जप"), {
+            "hook": "नाम जप में मन कैसे लगाया जाए?",
+            "takeaway": "सीख: नाम जप में नियमितता रखें और भटकते मन को बार-बार प्रेम से वापस लाएँ।",
+            "caption": "Premanand Ji Maharaj की इस वाणी में नाम जप में मन लगाने की सीख सुनिए। 🙏",
+            "hashtags": ["#नामजप", "#भक्ति"],
+        }),
+        (("मोह", "आसक्ति"), {
+            "hook": "मोह और आसक्ति से कैसे बचें?",
+            "takeaway": "सीख: आसक्ति को पहचानकर विवेक, स्मरण और सही दृष्टि से मन को संतुलित रखें।",
+            "caption": "Premanand Ji Maharaj की इस वाणी में मोह और आसक्ति को समझने की सीख सुनिए। 🙏",
+            "hashtags": ["#वैराग्य", "#आध्यात्म"],
+        }),
+        (("प्रेम", "रिश्त"), {
+            "hook": "रिश्तों में सही भाव कैसे रखा जाए?",
+            "takeaway": "सीख: रिश्तों में अपेक्षा से अधिक करुणा, सम्मान और सही भाव को महत्व दें।",
+            "caption": "Premanand Ji Maharaj की इस वाणी में रिश्तों में सही भाव रखने की सीख सुनिए। 🙏",
+            "hashtags": ["#प्रेम", "#जीवनसीख"],
+        }),
+        (("मन", "शांति"), {
+            "hook": "मन को स्थिर और शांत कैसे रखें?",
+            "takeaway": "सीख: मन भटके तो उसे बार-बार स्मरण, धैर्य और सही विचार की ओर लौटाएँ।",
+            "caption": "Premanand Ji Maharaj की इस वाणी में मन को शांत और स्थिर रखने की सीख सुनिए। 🙏",
+            "hashtags": ["#मनकीशांति", "#भक्ति"],
+        }),
     )
-    for terms, hook in topic_hooks:
+    for terms, editorial in topics:
         if any(term in transcript for term in terms):
-            return hook
-    return "कठिन समय में सही भाव कैसे रखा जाए?"
+            return editorial
+    return {
+        "hook": "कठिन समय में सही भाव कैसे रखा जाए?",
+        "takeaway": "सीख: परिस्थिति कठिन हो तो भी प्रतिक्रिया से पहले मन को शांत कर सही भाव बनाए रखें।",
+        "caption": "Premanand Ji Maharaj की इस वाणी से कठिन समय में सही भाव बनाए रखने की सीख समझिए। 🙏",
+        "hashtags": ["#जीवनसीख", "#भक्ति"],
+    }
 
+
+def transcript_fallback_hook(transcript: str) -> str:
+    return str(transcript_topic(transcript)["hook"])
+
+
+def fallback_editorial(transcript: str, media_key: str) -> dict:
+    topic = transcript_topic(transcript)
+    fallback_tags = video_hashtags(media_key)
+    return {
+        "hook": clean(topic["hook"], 90),
+        "takeaway": clean(topic["takeaway"], 170),
+        "caption": clean(topic["caption"], 170),
+        "hashtags": normalize_hashtags(topic["hashtags"], fallback_tags),
+    }
 
 
 def normalize_hashtags(value: object, fallback: str) -> list[str]:
@@ -152,6 +221,7 @@ def normalize_hashtags(value: object, fallback: str) -> list[str]:
 
 
 def make_editorial(transcript: str, title: str, media_key: str, api_key: str) -> dict:
+    fallback = fallback_editorial(transcript, media_key)
     prompt = f"""Create an editorial layer for a devotional Instagram Reel using a source clip of Premanand Ji Maharaj.
 Use only the supplied transcript as factual context. Do not invent or misquote him.
 
@@ -168,8 +238,7 @@ HOOK RULES:
 - Hindi Devanagari, 4-10 words.
 - Pick ONE concrete problem, question, tension, or teaching actually present in the transcript.
 - Prefer a natural question a viewer genuinely wants answered.
-- Use a specific concept from the clip: चिंता, क्रोध, अपमान, भक्ति, नाम जप, मोह, रिश्ते, विश्वास, मन की शांति, etc. only when the transcript supports it.
-- The viewer should understand the topic before the speaker begins.
+- Use a specific concept from the clip only when the transcript supports it.
 - Never use generic praise, vague curiosity bait, or "watch till end".
 - Forbidden styles include: "ये बात जीवन बदल देगी", "हर किसी को ये सुनना चाहिए", "बहुत सुंदर संदेश", "अंत तक देखें", "ज़रूर सुनें", "हैरान रह जाएंगे".
 
@@ -239,27 +308,43 @@ Transcript:
             raise RuntimeError("groq_editor_truncated")
         return json.loads(payload["choices"][0]["message"]["content"])
 
-    data = request_editorial(prompt)
+    # Editorial generation improves specificity when available, but it is not a
+    # hard dependency. Download + transcription + rendering must still succeed
+    # if the model refuses, times out, emits invalid JSON, or has a transient API error.
+    try:
+        data = request_editorial(prompt)
+    except (requests.RequestException, RuntimeError, ValueError, KeyError, TypeError) as error:
+        print(f"editorial fallback activated: {type(error).__name__}: {error}", file=sys.stderr)
+        return fallback
+
     hook = clean(data.get("hook"), 90)
     if not hook_is_specific(hook):
-        data = request_editorial(
-            prompt
-            + f'\n\nThe previous hook "{hook}" was rejected as vague or too long. '
-              "Rewrite it as a concrete 4-10 word Hindi question tied to one specific idea in the transcript."
-        )
-        hook = clean(data.get("hook"), 90)
-    if not hook_is_specific(hook):
-        hook = transcript_fallback_hook(transcript)
+        try:
+            retry_data = request_editorial(
+                prompt
+                + f'\n\nThe previous hook "{hook}" was rejected as vague or too long. '
+                  "Rewrite it as a concrete 4-10 word Hindi question tied to one specific idea in the transcript."
+            )
+            retry_hook = clean(retry_data.get("hook"), 90)
+            if hook_is_specific(retry_hook):
+                data = retry_data
+                hook = retry_hook
+        except (requests.RequestException, RuntimeError, ValueError, KeyError, TypeError) as error:
+            print(f"editorial hook retry skipped: {type(error).__name__}: {error}", file=sys.stderr)
 
-    fallback = video_hashtags(media_key)
+    if not hook_is_specific(hook):
+        hook = fallback["hook"]
+
+    fallback_tags = video_hashtags(media_key)
     return {
         "hook": hook,
-        "takeaway": clean(data.get("takeaway"), 170)
-        or "सीख: इस संदेश को अपने व्यवहार में शांत मन से उतारने का प्रयास करें।",
-        "caption": clean(data.get("caption"), 170)
-        or "Premanand Ji Maharaj की इस सीख को सुनिए और अपने जीवन के संदर्भ में समझिए। 🙏",
-        "hashtags": normalize_hashtags(data.get("hashtags"), fallback),
+        "takeaway": clean(data.get("takeaway"), 170) or fallback["takeaway"],
+        "caption": clean(data.get("caption"), 170) or fallback["caption"],
+        "hashtags": normalize_hashtags(data.get("hashtags"), fallback_tags)
+        if data.get("hashtags")
+        else fallback["hashtags"],
     }
+
 
 def ass_time(seconds: float) -> str:
     seconds = max(0.0, float(seconds))
