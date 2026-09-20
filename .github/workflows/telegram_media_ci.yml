@@ -33,5 +33,30 @@ jobs:
       - name: Run Telegram bot unit tests
         working-directory: youtube-telegram-bot
         run: npm test
-      - name: Validate yt-dlp worker source
-        run: python -m py_compile youtube-telegram-bot/scripts/download_youtube.py
+      - name: Validate media worker sources
+        run: |
+          python -m py_compile youtube-telegram-bot/scripts/download_youtube.py
+          python -m py_compile youtube-telegram-bot/scripts/transform_reel.py
+      - name: Verify Krishna intro asset
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          import hashlib
+
+          assets = Path("youtube-telegram-bot/assets")
+          parts = [
+              assets / "krishna-intro.00a.b64",
+              assets / "krishna-intro.00b.b64",
+              *[assets / f"krishna-intro.chunk{i:02d}.b64" for i in range(1, 9)],
+              assets / "krishna-intro.09a.b64",
+              assets / "krishna-intro.09b.b64",
+          ]
+          encoded = "".join(path.read_text(encoding="ascii").strip() for path in parts)
+          payload = base64.b64decode(encoded, validate=True)
+          digest = hashlib.sha256(payload).hexdigest()
+          assert len(payload) == 41610, len(payload)
+          assert digest == "2e4b59b4afb465314e510707faa0e96de46641cbb67b4b12990ffb3c4eb66c73", digest
+          assert payload.startswith(b"\xff\xd8") and payload.endswith(b"\xff\xd9")
+          print("Krishna intro asset verified:", len(payload), digest)
+          PY
