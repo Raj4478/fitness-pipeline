@@ -21,7 +21,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -59,4 +59,62 @@ jobs:
           assert digest == "2e4b59b4afb465314e510707faa0e96de46641cbb67b4b12990ffb3c4eb66c73", digest
           assert payload.startswith(b"\xff\xd8") and payload.endswith(b"\xff\xd9")
           print("Krishna intro asset verified:", len(payload), digest)
+          PY
+      - name: Install renderer smoke dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-noto-core
+          python -m pip install --disable-pip-version-check -q yt-dlp requests
+      - name: Smoke test premium Reel renderer
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+          import tempfile
+
+          scripts = Path("youtube-telegram-bot/scripts").resolve()
+          sys.path.insert(0, str(scripts))
+          from transform_reel import render
+
+          with tempfile.TemporaryDirectory(prefix="reel-smoke-") as temp:
+              directory = Path(temp)
+              source = directory / "source.mp4"
+              subprocess.run(
+                  [
+                      "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                      "-f", "lavfi", "-i", "color=c=0x243044:s=720x1280:d=4:r=30",
+                      "-f", "lavfi", "-i", "sine=frequency=440:duration=4:sample_rate=44100",
+                      "-shortest",
+                      "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                      "-c:a", "aac", "-ar", "44100", "-ac", "2",
+                      str(source),
+                  ],
+                  check=True,
+              )
+              result = render(
+                  source,
+                  [{"start": 0.2, "end": 1.5, "text": "मन को शांति कैसे मिले?"}],
+                  {
+                      "hook": "मन को शांत कैसे रखा जाए?",
+                      "takeaway": "सीख: परिस्थिति कठिन हो, फिर भी मन को भगवान में स्थिर रखने का अभ्यास करें।",
+                  },
+                  directory,
+              )
+              output = Path(result)
+              assert output.is_file() and output.stat().st_size > 10000
+              probe = subprocess.run(
+                  [
+                      "ffprobe", "-v", "error",
+                      "-select_streams", "v:0",
+                      "-show_entries", "stream=width,height",
+                      "-of", "csv=p=0:s=x",
+                      str(output),
+                  ],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+              ).stdout.strip()
+              assert probe == "720x1280", probe
+              print("Premium Reel render verified:", output.stat().st_size, probe)
           PY
