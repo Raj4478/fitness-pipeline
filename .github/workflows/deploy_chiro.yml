@@ -2,6 +2,12 @@ name: Deploy Chiro Studio
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - master
+    paths:
+      - 'youtube-telegram-bot/**'
+      - '.github/workflows/deploy_chiro.yml'
 
 permissions:
   contents: read
