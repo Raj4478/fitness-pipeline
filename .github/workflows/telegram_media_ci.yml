@@ -65,6 +65,39 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fonts-noto-core
           python -m pip install --disable-pip-version-check -q yt-dlp requests
+      - name: Verify editorial API failure fallback
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+
+          scripts = Path("youtube-telegram-bot/scripts").resolve()
+          sys.path.insert(0, str(scripts))
+          import transform_reel
+
+          class RefusedResponse:
+              ok = False
+              status_code = 400
+              text = '{"error":{"code":"json_validate_failed","failed_generation":"refused"}}'
+
+          original_post = transform_reel.requests.post
+          transform_reel.requests.post = lambda *args, **kwargs: RefusedResponse()
+          try:
+              editorial = transform_reel.make_editorial(
+                  "जब चिंता बढ़ती है तब मन भगवान के स्मरण में लगाना चाहिए और धैर्य रखना चाहिए।",
+                  "test clip",
+                  "https://www.instagram.com/reel/test/",
+                  "fake-key",
+              )
+          finally:
+              transform_reel.requests.post = original_post
+
+          assert editorial["hook"] == "चिंता के समय मन को कैसे संभालें?", editorial
+          assert editorial["caption"], editorial
+          assert editorial["takeaway"], editorial
+          assert editorial["hashtags"][0] == "#PremanandJiMaharaj", editorial
+          print("Editorial refusal fallback verified:", editorial["hook"])
+          PY
       - name: Smoke test premium Reel renderer
         run: |
           python - <<'PY'
