@@ -1,10 +1,10 @@
-name: Authorized Media Download Worker
+name: Authorized Media Transform Worker
 
 on:
   workflow_dispatch:
     inputs:
       url:
-        description: 'Authorized public YouTube or Instagram Reel URL to download'
+        description: 'Authorized public YouTube or Instagram Reel URL to transform'
         required: true
         type: string
 
@@ -12,27 +12,35 @@ permissions:
   contents: read
 
 concurrency:
-  group: authorized-media-download
+  group: authorized-media-transform
   cancel-in-progress: false
 
 jobs:
-  download:
+  transform:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       MEDIA_URL: ${{ inputs.url }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       DOWNLOAD_MAX_DURATION_SECONDS: '900'
+      TRANSFORM_MAX_DURATION_SECONDS: '180'
+      GROQ_TRANSCRIBE_MODEL: 'whisper-large-v3-turbo'
+      GROQ_EDITOR_MODEL: 'openai/gpt-oss-20b'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install downloader runtime
+      - name: Install media runtime
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg fonts-noto-core
           python -m pip install --disable-pip-version-check -U --pre "yt-dlp[default]" requests
-      - name: Download and return video to Telegram
-        run: python youtube-telegram-bot/scripts/download_youtube.py
+      - name: Validate transformer
+        run: |
+          python -m py_compile youtube-telegram-bot/scripts/download_youtube.py
+          python -m py_compile youtube-telegram-bot/scripts/transform_reel.py
+      - name: Transform and return Reel to Telegram
+        run: python youtube-telegram-bot/scripts/transform_reel.py
