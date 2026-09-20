@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import re
@@ -25,6 +27,30 @@ from download_youtube import (
 GROQ_TRANSCRIBE_MODEL = os.getenv("GROQ_TRANSCRIBE_MODEL", "whisper-large-v3-turbo")
 GROQ_EDITOR_MODEL = os.getenv("GROQ_EDITOR_MODEL", "openai/gpt-oss-20b")
 TRANSFORM_MAX_SECONDS = int(os.getenv("TRANSFORM_MAX_DURATION_SECONDS", "180"))
+INTRO_DURATION = 1.6
+HOOK_DURATION = 3.2
+OUTRO_DURATION = 2.8
+ASSET_DIRECTORY = Path(__file__).resolve().parent.parent / "assets"
+KRISHNA_INTRO_SEGMENTS = (
+    ASSET_DIRECTORY / "krishna-intro.00a.b64",
+    ASSET_DIRECTORY / "krishna-intro.00b.b64",
+    *(ASSET_DIRECTORY / f"krishna-intro.chunk{i:02d}.b64" for i in range(1, 9)),
+    ASSET_DIRECTORY / "krishna-intro.09a.b64",
+    ASSET_DIRECTORY / "krishna-intro.09b.b64",
+)
+KRISHNA_INTRO_SHA256 = "2e4b59b4afb465314e510707faa0e96de46641cbb67b4b12990ffb3c4eb66c73"
+BANNED_HOOK_PHRASES = (
+    "जीवन बदल",
+    "जरूर सुन",
+    "ज़रूर सुन",
+    "अंत तक",
+    "हैरान",
+    "बहुत सुंदर",
+    "हर किसी को",
+    "हर भक्त को",
+    "ये बात सुन",
+    "यह बात सुन",
+)
 
 
 def ffmpeg(*args: str) -> None:
@@ -66,6 +92,47 @@ def clean(value: object, limit: int) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()[:limit].rstrip()
 
 
+def materialize_krishna_intro(directory: Path) -> Path:
+    try:
+        encoded = "".join(path.read_text(encoding="ascii").strip() for path in KRISHNA_INTRO_SEGMENTS)
+        payload = base64.b64decode(encoded, validate=True)
+    except Exception as error:
+        raise RuntimeError("krishna_intro_asset_invalid") from error
+    if hashlib.sha256(payload).hexdigest() != KRISHNA_INTRO_SHA256:
+        raise RuntimeError("krishna_intro_asset_checksum_failed")
+    output = directory / "krishna-intro.jpg"
+    output.write_bytes(payload)
+    return output
+
+
+def hook_is_specific(hook: str) -> bool:
+    words = hook.split()
+    return (
+        4 <= len(words) <= 10
+        and not any(phrase in hook for phrase in BANNED_HOOK_PHRASES)
+    )
+
+
+def transcript_fallback_hook(transcript: str) -> str:
+    topic_hooks = (
+        (("चिंता", "फिक्र", "परेशान"), "चिंता के समय मन को कैसे संभालें?"),
+        (("क्रोध", "गुस्सा"), "गुस्सा आते ही मन को कैसे संभालें?"),
+        (("अपमान", "बेइज्जती"), "अपमान होने पर हमें क्या करना चाहिए?"),
+        (("दुख", "दुःख", "उदासी"), "दुख के समय मन को कैसे संभालें?"),
+        (("विश्वास", "भरोसा"), "भगवान पर भरोसा कैसे मजबूत करें?"),
+        (("भक्ति",), "सच्ची भक्ति की पहचान क्या है?"),
+        (("नाम जप", "नामजप", "जप"), "नाम जप में मन कैसे लगाया जाए?"),
+        (("मोह", "आसक्ति"), "मोह और आसक्ति से कैसे बचें?"),
+        (("प्रेम", "रिश्त"), "रिश्तों में सही भाव कैसे रखा जाए?"),
+        (("मन", "शांति"), "मन को स्थिर और शांत कैसे रखें?"),
+    )
+    for terms, hook in topic_hooks:
+        if any(term in transcript for term in terms):
+            return hook
+    return "कठिन समय में सही भाव कैसे रखा जाए?"
+
+
+
 def normalize_hashtags(value: object, fallback: str) -> list[str]:
     tags: list[str] = []
     if isinstance(value, list):
@@ -86,13 +153,40 @@ def normalize_hashtags(value: object, fallback: str) -> list[str]:
 
 def make_editorial(transcript: str, title: str, media_key: str, api_key: str) -> dict:
     prompt = f"""Create an editorial layer for a devotional Instagram Reel using a source clip of Premanand Ji Maharaj.
-Use only the supplied transcript as factual context. Do not invent or misquote him. Avoid clickbait.
+Use only the supplied transcript as factual context. Do not invent or misquote him.
+
+The Reel ALWAYS opens with a premium Krishna card that already says:
+"आज का संदेश"
+"प्रेमानंद जी महाराज की वाणी"
+
+The hook appears immediately AFTER that card, over the first seconds of the real source clip.
+Therefore the hook must CONTINUE the intro naturally. It must not repeat the intro or sound like another generic introduction.
+
 Return JSON only with exactly: hook, takeaway, caption, hashtags.
 
-hook: Hindi Devanagari, 5-12 words, specific to this clip.
-takeaway: Hindi Devanagari, 8-22 words, clearly an editorial takeaway rather than a direct quote.
-caption: Hindi/Hinglish, maximum 170 characters, accurately describes the clip.
-hashtags: exactly 3 relevant hashtags; one must be #PremanandJiMaharaj; no #viral/#trending/#explorepage.
+HOOK RULES:
+- Hindi Devanagari, 4-10 words.
+- Pick ONE concrete problem, question, tension, or teaching actually present in the transcript.
+- Prefer a natural question a viewer genuinely wants answered.
+- Use a specific concept from the clip: चिंता, क्रोध, अपमान, भक्ति, नाम जप, मोह, रिश्ते, विश्वास, मन की शांति, etc. only when the transcript supports it.
+- The viewer should understand the topic before the speaker begins.
+- Never use generic praise, vague curiosity bait, or "watch till end".
+- Forbidden styles include: "ये बात जीवन बदल देगी", "हर किसी को ये सुनना चाहिए", "बहुत सुंदर संदेश", "अंत तक देखें", "ज़रूर सुनें", "हैरान रह जाएंगे".
+
+TAKEAWAY RULES:
+- Hindi Devanagari, 8-20 words.
+- Practical and faithful to the transcript.
+- Clearly editorial summary, not a fabricated direct quote.
+
+CAPTION RULES:
+- Hindi/Hinglish, maximum 170 characters.
+- Accurately describe the actual teaching in this clip.
+
+HASHTAGS:
+- Exactly 3.
+- One must be #PremanandJiMaharaj.
+- The other two must match the actual topic.
+- No #viral, #trending, #explorepage.
 
 Source title: {title[:300]}
 Transcript:
@@ -109,47 +203,63 @@ Transcript:
             "hashtags": {"type": "array", "items": {"type": "string"}},
         },
     }
-    response = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "model": GROQ_EDITOR_MODEL,
-            "reasoning_effort": "low",
-            "max_completion_tokens": 2200,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "reel_editorial",
-                    "strict": True,
-                    "schema": schema,
+
+    def request_editorial(request_prompt: str) -> dict:
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": GROQ_EDITOR_MODEL,
+                "reasoning_effort": "low",
+                "max_completion_tokens": 2200,
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "reel_editorial",
+                        "strict": True,
+                        "schema": schema,
+                    },
                 },
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "Return only the requested structured editorial data. Keep wording respectful, specific, and grounded in the transcript.",
+                    },
+                    {"role": "user", "content": request_prompt},
+                ],
             },
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "Return only the requested structured editorial data. Keep wording respectful and grounded in the transcript.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-        },
-        timeout=90,
-    )
-    if not response.ok:
-        raise RuntimeError(
-            f"groq_editor_failed:{response.status_code}:{response.text[:800]}"
+            timeout=90,
         )
-    payload = response.json()
-    if payload.get("choices", [{}])[0].get("finish_reason") == "length":
-        raise RuntimeError("groq_editor_truncated")
-    data = json.loads(payload["choices"][0]["message"]["content"])
+        if not response.ok:
+            raise RuntimeError(
+                f"groq_editor_failed:{response.status_code}:{response.text[:800]}"
+            )
+        payload = response.json()
+        if payload.get("choices", [{}])[0].get("finish_reason") == "length":
+            raise RuntimeError("groq_editor_truncated")
+        return json.loads(payload["choices"][0]["message"]["content"])
+
+    data = request_editorial(prompt)
+    hook = clean(data.get("hook"), 90)
+    if not hook_is_specific(hook):
+        data = request_editorial(
+            prompt
+            + f'\n\nThe previous hook "{hook}" was rejected as vague or too long. '
+              "Rewrite it as a concrete 4-10 word Hindi question tied to one specific idea in the transcript."
+        )
+        hook = clean(data.get("hook"), 90)
+    if not hook_is_specific(hook):
+        hook = transcript_fallback_hook(transcript)
+
     fallback = video_hashtags(media_key)
     return {
-        "hook": clean(data.get("hook"), 90) or "आज की इस बात को ध्यान से सुनिए",
-        "takeaway": clean(data.get("takeaway"), 170) or "सीख: इस बात पर मनन करें और इसे सही जगह अपने जीवन में लागू करें।",
-        "caption": clean(data.get("caption"), 170) or "Premanand Ji Maharaj की इस बात का सार सुनिए और अपने जीवन से जोड़कर समझिए। 🙏",
+        "hook": hook,
+        "takeaway": clean(data.get("takeaway"), 170)
+        or "सीख: इस संदेश को अपने व्यवहार में शांत मन से उतारने का प्रयास करें।",
+        "caption": clean(data.get("caption"), 170)
+        or "Premanand Ji Maharaj की इस सीख को सुनिए और अपने जीवन के संदर्भ में समझिए। 🙏",
         "hashtags": normalize_hashtags(data.get("hashtags"), fallback),
     }
-
 
 def ass_time(seconds: float) -> str:
     seconds = max(0.0, float(seconds))
@@ -214,55 +324,132 @@ def font_path() -> str:
 
 def render(video: Path, segments: list[dict], editorial: dict, directory: Path) -> Path:
     font = font_path()
+    intro_image = materialize_krishna_intro(directory)
     ass = directory / "captions.ass"
     hook = directory / "hook.txt"
     takeaway = directory / "takeaway.txt"
-    intro, main, outro, output = [directory / name for name in ("intro.mp4", "main.mp4", "outro.mp4", "instagram-ready.mp4")]
+    intro, main, outro, output = [
+        directory / name
+        for name in ("intro.mp4", "main.mp4", "outro.mp4", "instagram-ready.mp4")
+    ]
     write_ass(segments, ass)
     hook.write_text(wrap(editorial["hook"], 24), encoding="utf-8")
     takeaway.write_text(wrap(editorial["takeaway"], 27), encoding="utf-8")
 
+    # Premium fixed identity card: the approved Krishna artwork already contains
+    # "आज का संदेश" and "प्रेमानंद जी महाराज की वाणी".
     ffmpeg(
-        "-y", "-f", "lavfi", "-i", "color=c=0x171717:s=720x1280:d=2.2:r=30",
-        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-        "-vf", f"drawtext=fontfile='{font}':textfile='{hook}':fontcolor=white:fontsize=52:line_spacing=14:x=(w-text_w)/2:y=(h-text_h)/2:box=1:boxcolor=black@0.25:boxborderw=26",
-        "-t", "2.2", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "96k", "-ar", "44100", "-ac", "2", str(intro),
+        "-y",
+        "-loop", "1",
+        "-framerate", "30",
+        "-i", str(intro_image),
+        "-f", "lavfi",
+        "-i", "anullsrc=r=44100:cl=stereo",
+        "-vf",
+        (
+            "scale=720:1280:flags=lanczos,"
+            "fade=t=in:st=0:d=0.18,"
+            f"fade=t=out:st={INTRO_DURATION - 0.28:.2f}:d=0.28"
+        ),
+        "-t", str(INTRO_DURATION),
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "22",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "96k",
+        "-ar", "44100",
+        "-ac", "2",
+        str(intro),
     )
 
     ass_path = str(ass).replace("'", r"\'")
+    hook_path = str(hook).replace("'", r"\'")
+    # The dynamic hook is deliberately placed on the real clip, after the Krishna
+    # identity card, so the two screens read as one coherent thought.
     vf = (
         "scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,fps=30,"
         f"subtitles='{ass_path}',"
-        f"drawtext=fontfile='{font}':text='Premanand Ji Maharaj • source clip':fontcolor=white@0.88:fontsize=24:"
-        "x=(w-text_w)/2:y=42:box=1:boxcolor=black@0.42:boxborderw=9"
+        f"drawtext=fontfile='{font}':text='Premanand Ji Maharaj • source clip':"
+        "fontcolor=white@0.90:fontsize=22:x=(w-text_w)/2:y=30:"
+        "box=1:boxcolor=0x061426@0.48:boxborderw=8,"
+        f"drawbox=x=42:y=92:w=636:h=226:color=0x071426@0.76:t=fill:enable='between(t,0,{HOOK_DURATION})',"
+        f"drawbox=x=42:y=92:w=636:h=226:color=0xD9B75F@0.95:t=3:enable='between(t,0,{HOOK_DURATION})',"
+        f"drawtext=fontfile='{font}':textfile='{hook_path}':fontcolor=0xFFF2CF:"
+        "fontsize=46:line_spacing=12:x=(w-text_w)/2:y=205-(text_h/2):"
+        "shadowcolor=black@0.85:shadowx=2:shadowy=2:"
+        f"enable='between(t,0,{HOOK_DURATION})'"
     )
     ffmpeg(
-        "-y", "-i", str(video), "-vf", vf,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "24", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2", str(main),
+        "-y", "-i", str(video),
+        "-vf", vf,
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "24",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-ar", "44100",
+        "-ac", "2",
+        str(main),
+    )
+
+    takeaway_path = str(takeaway).replace("'", r"\'")
+    # Reuse the Krishna visual language for the takeaway instead of dropping to a
+    # plain black card, keeping the Reel visually cohesive from first frame to last.
+    outro_vf = (
+        "scale=720:1280:flags=lanczos,"
+        "boxblur=4:1,eq=brightness=-0.34:saturation=0.72,"
+        "drawbox=x=34:y=300:w=652:h=500:color=0x061426@0.78:t=fill,"
+        "drawbox=x=34:y=300:w=652:h=500:color=0xD9B75F@0.92:t=3,"
+        f"drawtext=fontfile='{font}':text='आज की सीख':fontcolor=0xE7C46A:"
+        "fontsize=34:x=(w-text_w)/2:y=350,"
+        f"drawtext=fontfile='{font}':textfile='{takeaway_path}':fontcolor=0xFFF2CF:"
+        "fontsize=42:line_spacing=13:x=(w-text_w)/2:y=505-(text_h/2):"
+        "shadowcolor=black@0.9:shadowx=2:shadowy=2,"
+        f"drawtext=fontfile='{font}':text='राधे राधे':fontcolor=0xE7C46A:"
+        "fontsize=40:x=(w-text_w)/2:y=690,"
+        f"fade=t=out:st={OUTRO_DURATION - 0.30:.2f}:d=0.30"
+    )
+    ffmpeg(
+        "-y",
+        "-loop", "1",
+        "-framerate", "30",
+        "-i", str(intro_image),
+        "-f", "lavfi",
+        "-i", "anullsrc=r=44100:cl=stereo",
+        "-vf", outro_vf,
+        "-t", str(OUTRO_DURATION),
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "96k",
+        "-ar", "44100",
+        "-ac", "2",
+        str(outro),
     )
 
     ffmpeg(
-        "-y", "-f", "lavfi", "-i", "color=c=0x171717:s=720x1280:d=3:r=30",
-        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-        "-vf", (
-            f"drawtext=fontfile='{font}':textfile='{takeaway}':fontcolor=white:fontsize=44:line_spacing=14:"
-            "x=(w-text_w)/2:y=(h-text_h)/2-50:box=1:boxcolor=black@0.25:boxborderw=24,"
-            f"drawtext=fontfile='{font}':text='राधे राधे':fontcolor=white:fontsize=40:x=(w-text_w)/2:y=h-230"
-        ),
-        "-t", "3", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "96k", "-ar", "44100", "-ac", "2", str(outro),
-    )
-
-    ffmpeg(
-        "-y", "-i", str(intro), "-i", str(main), "-i", str(outro),
-        "-filter_complex", "[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[v][a]",
-        "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "25",
-        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "112k", "-movflags", "+faststart", str(output),
+        "-y",
+        "-i", str(intro),
+        "-i", str(main),
+        "-i", str(outro),
+        "-filter_complex",
+        "[0:v][0:a][1:v][1:a][2:v][2:a]concat=n=3:v=1:a=1[v][a]",
+        "-map", "[v]",
+        "-map", "[a]",
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-crf", "25",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "112k",
+        "-movflags", "+faststart",
+        str(output),
     )
     return output
-
 
 def fit_for_telegram(video: Path, directory: Path) -> Path:
     if video.stat().st_size <= MAX_TELEGRAM_BYTES:
@@ -328,7 +515,7 @@ def main() -> int:
                     result, editorial = transform(source, info, url, directory, groq_key)
                     hashtags = " ".join(editorial["hashtags"])
                     send_video(token, chat_id, result, f"✅ Instagram-ready edit\n\n{editorial['caption']}\n\n{hashtags}", hashtags)
-                    send_text(token, chat_id, "✨ Added an original opening hook, synced subtitles, source attribution and a clip-specific takeaway. Review it before posting and only reuse footage you have permission to use.")
+                    send_text(token, chat_id, "✨ Added the Krishna intro card, a transcript-specific hook on the source clip, synced subtitles, attribution and a styled takeaway outro. Review it before posting and only reuse footage you have permission to use.")
                     return 0
                 except DownloadError as error:
                     last_error = error
