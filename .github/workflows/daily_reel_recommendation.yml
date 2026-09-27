@@ -1,0 +1,27 @@
+name: Daily Reel Recommendation
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub cron is UTC. 01:30 UTC = 07:00 IST.
+    - cron: '30 1 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  recommend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_ALLOWED_USER_ID: ${{ secrets.TELEGRAM_ALLOWED_USER_ID }}
+      TELEGRAM_WEBHOOK_SECRET: ${{ secrets.CHIRO_WEBHOOK_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Send daily deity and mood recommendation
+        working-directory: youtube-telegram-bot
+        run: node scripts/send-daily-recommendation.mjs
