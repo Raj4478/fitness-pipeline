@@ -43,6 +43,8 @@ jobs:
           python -m py_compile youtube-telegram-bot/scripts/download_youtube.py
           python -m py_compile youtube-telegram-bot/scripts/transform_reel.py
           python -m py_compile youtube-telegram-bot/scripts/create_original_reel.py
+          ! grep -q "zoompan=" youtube-telegram-bot/scripts/create_original_reel.py
+          ! grep -q "vignette=" youtube-telegram-bot/scripts/create_original_reel.py
       - name: Verify Krishna intro asset
         run: |
           python - <<'PY'
@@ -170,10 +172,10 @@ jobs:
           python youtube-telegram-bot/scripts/create_original_reel.py
           test -s "${ORIGINAL_REEL_OUTPUT_DIR}/original-devotional-reel.mp4"
           dims="$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x "${ORIGINAL_REEL_OUTPUT_DIR}/original-devotional-reel.mp4")"
-          test "$dims" = "720x1280"
+          test "$dims" = "1080x1920"
           duration="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "${ORIGINAL_REEL_OUTPUT_DIR}/original-devotional-reel.mp4")"
           python - <<PY
           duration = float("$duration")
-          assert 29.0 <= duration <= 31.0, duration
+          assert 18.8 <= duration <= 19.6, duration
           print("Original mood Reel render verified:", duration, "seconds", "$dims")
           PY
