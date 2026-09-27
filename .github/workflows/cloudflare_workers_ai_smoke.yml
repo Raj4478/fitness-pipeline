@@ -24,6 +24,17 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           echo "Cloudflare credentials are present"
 
+      - name: Verify configured account ID matches Workers AI page
+        env:
+          EXPECTED_CLOUDFLARE_ACCOUNT_ID: 0f27f8736524320f3f80b93b3d485f98
+        run: |
+          if [ "$CLOUDFLARE_ACCOUNT_ID" = "$EXPECTED_CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "Configured account ID matches the Workers AI dashboard account ✅"
+          else
+            echo "Configured account ID DOES NOT match the Workers AI dashboard account ❌"
+            exit 1
+          fi
+
       - name: Verify Cloudflare API token status
         run: |
           verify_code="$(curl -sS -o token.json -w '%{http_code}' \
@@ -52,6 +63,25 @@ jobs:
           print("Account-token success:", payload.get("success"))
           print("Account-token status:", (payload.get("result") or {}).get("status"))
           print("Account-token errors:", payload.get("errors") or [])
+          PY
+
+      - name: Test exact Cloudflare Workers AI quick-start endpoint
+        run: |
+          quick_code="$(curl -sS -o quick.json -w '%{http_code}' \
+            --request POST \
+            --url "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/meta/llama-3.1-8b-instruct" \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            --header "Content-Type: application/json" \
+            --data '{"prompt":"Reply with only OK"}')"
+          echo "Quick-start inference HTTP status: $quick_code"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("quick.json").read_text())
+          print("Quick-start success:", payload.get("success"))
+          print("Quick-start errors:", payload.get("errors") or [])
+          if payload.get("success"):
+              print("Quick-start result present:", bool(payload.get("result")))
           PY
 
       - name: Generate test image with Workers AI
