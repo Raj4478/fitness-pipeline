@@ -277,10 +277,12 @@ def generate_fallback_story_scenes(output_root: Path, mood: str) -> list[Path]:
 def _story_image_prompts(topic: str, mood: str) -> list[str]:
     topic_clean = clean(topic, 120)
     style = (
-        "vertical 9:16 cinematic Indian devotional artwork, photorealistic illustration, "
-        "premium film lighting, highly detailed, clean composition, realistic anatomy, "
-        "subtle blue and warm gold color harmony, no text, no subtitles, no watermark, "
-        "no collage, no split screen, one full-frame scene"
+        "premium vertical 9:16 cinematic Indian devotional artwork for a high-end Instagram Reel, "
+        "realistic faces and anatomy, crisp eyes and hands, intricate fabric and jewelry detail, "
+        "natural skin texture, cinematic depth, controlled highlights, rich shadow detail, "
+        "sharp focal subject with graceful depth of field, subtle blue and warm gold color harmony, "
+        "no text, no subtitles, no watermark, no collage, no split screen, no poster border, "
+        "no low-resolution look, no smeared details, one full-frame scene"
     )
     person = (
         "the same anonymous young Indian man in his mid-20s, short dark hair, simple neutral clothing, "
@@ -302,12 +304,73 @@ def _story_image_prompts(topic: str, mood: str) -> list[str]:
     ]
 
 
+def _save_story_frame(raw: bytes, output_root: Path, index: int) -> Path:
+    with Image.open(BytesIO(raw)) as image:
+        frame = _cover(image.convert("RGB"))
+        frame = ImageEnhance.Sharpness(frame).enhance(1.08)
+        frame = ImageEnhance.Contrast(frame).enhance(1.02)
+        path = output_root / f"story-scene-{index}.jpg"
+        frame.save(path, "JPEG", quality=96, subsampling=0, optimize=True)
+        return path
+
+
+def _extract_gemini_image(payload: dict) -> bytes:
+    for step in payload.get("steps") or []:
+        if step.get("type") != "model_output":
+            continue
+        for item in step.get("content") or []:
+            if item.get("type") == "image" and item.get("data"):
+                return base64.b64decode(item["data"])
+    raise RuntimeError("gemini_image_missing_payload")
+
+
+def generate_gemini_story_scenes(output_root: Path, topic: str, mood: str, api_key: str) -> list[Path]:
+    if not api_key:
+        raise RuntimeError("gemini_image_key_missing")
+
+    model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image").strip() or "gemini-3.1-flash-image"
+    image_size = os.getenv("GEMINI_IMAGE_SIZE", "2K").strip() or "2K"
+    prompts = _story_image_prompts(topic, mood)
+    paths: list[Path] = []
+
+    for index, prompt in enumerate(prompts, start=1):
+        response = requests.post(
+            "https://generativelanguage.googleapis.com/v1beta/interactions",
+            headers={
+                "x-goog-api-key": api_key,
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "input": [{"type": "text", "text": prompt}],
+                "response_format": {
+                    "type": "image",
+                    "mime_type": "image/jpeg",
+                    "aspect_ratio": "9:16",
+                    "image_size": image_size,
+                },
+                "generation_config": {"thinking_level": "high"},
+            },
+            timeout=240,
+        )
+        if not response.ok:
+            raise RuntimeError(f"gemini_image_{index}_{response.status_code}:{response.text[:220]}")
+        raw = _extract_gemini_image(response.json())
+        paths.append(_save_story_frame(raw, output_root, index))
+
+    if len(paths) != 6:
+        raise RuntimeError("gemini_story_scene_count")
+    if len({hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}) != 6:
+        raise RuntimeError("gemini_story_scenes_not_unique")
+    return paths
+
+
 def generate_openai_story_scenes(output_root: Path, topic: str, mood: str, api_key: str) -> list[Path]:
     if not api_key:
         raise RuntimeError("openai_image_key_missing")
 
     model = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2.5-flare").strip() or "gpt-image-2.5-flare"
-    quality = os.getenv("OPENAI_IMAGE_QUALITY", "low").strip() or "low"
+    quality = os.getenv("OPENAI_IMAGE_QUALITY", "medium").strip() or "medium"
     prompts = _story_image_prompts(topic, mood)
     paths: list[Path] = []
 
@@ -322,27 +385,21 @@ def generate_openai_story_scenes(output_root: Path, topic: str, mood: str, api_k
                 "model": model,
                 "prompt": prompt,
                 "n": 1,
-                "size": "1024x1536",
+                "size": "1088x1936",
                 "quality": quality,
                 "output_format": "jpeg",
-                "output_compression": 88,
+                "output_compression": 94,
                 "background": "opaque",
             },
-            timeout=180,
+            timeout=240,
         )
         if not response.ok:
-            raise RuntimeError(f"openai_image_{index}_{response.status_code}:{response.text[:180]}")
+            raise RuntimeError(f"openai_image_{index}_{response.status_code}:{response.text[:220]}")
         payload = response.json()
         encoded = ((payload.get("data") or [{}])[0]).get("b64_json")
         if not encoded:
             raise RuntimeError(f"openai_image_{index}_missing_payload")
-        raw = base64.b64decode(encoded)
-        with Image.open(BytesIO(raw)) as image:
-            frame = _cover(image.convert("RGB"))
-            frame = ImageEnhance.Sharpness(frame).enhance(1.05)
-            path = output_root / f"story-scene-{index}.jpg"
-            frame.save(path, "JPEG", quality=93, subsampling=0, optimize=True)
-            paths.append(path)
+        paths.append(_save_story_frame(base64.b64decode(encoded), output_root, index))
 
     if len(paths) != 6:
         raise RuntimeError("openai_story_scene_count")
@@ -351,17 +408,38 @@ def generate_openai_story_scenes(output_root: Path, topic: str, mood: str, api_k
     return paths
 
 
-def build_story_scenes(output_root: Path, topic: str, mood: str, api_key: str) -> tuple[list[Path], str]:
+def build_story_scenes(
+    output_root: Path,
+    topic: str,
+    mood: str,
+    gemini_api_key: str,
+    openai_api_key: str,
+) -> tuple[list[Path], str]:
     if os.getenv("ORIGINAL_REEL_DRY_RUN") == "1":
         return generate_fallback_story_scenes(output_root, mood), "local_fallback"
 
-    if api_key:
-        try:
-            return generate_openai_story_scenes(output_root, topic, mood, api_key), "openai"
-        except Exception as exc:
-            print(f"AI image generation fallback: {type(exc).__name__}: {exc}", file=sys.stderr)
+    errors: list[str] = []
 
-    return generate_fallback_story_scenes(output_root, mood), "local_fallback"
+    if gemini_api_key:
+        try:
+            return generate_gemini_story_scenes(output_root, topic, mood, gemini_api_key), "gemini"
+        except Exception as exc:
+            message = f"Gemini image generation failed: {type(exc).__name__}: {exc}"
+            errors.append(message)
+            print(message, file=sys.stderr)
+
+    if openai_api_key:
+        try:
+            return generate_openai_story_scenes(output_root, topic, mood, openai_api_key), "openai"
+        except Exception as exc:
+            message = f"OpenAI image generation failed: {type(exc).__name__}: {exc}"
+            errors.append(message)
+            print(message, file=sys.stderr)
+
+    details = " | ".join(errors) if errors else "no image-provider credentials available"
+    raise RuntimeError(
+        "high_quality_image_generation_failed; refusing local low-quality fallback; " + details
+    )
 
 def fallback_script(topic: str, mood: str) -> dict:
     topic_clean = clean(topic, 90)
@@ -685,6 +763,7 @@ def main() -> int:
         output_root,
         topic,
         mood,
+        os.getenv("GEMINI_API_KEY", "").strip(),
         os.getenv("OPENAI_API_KEY", "").strip(),
     )
     ass = output_root / "reel.ass"
@@ -696,12 +775,6 @@ def main() -> int:
     final = fit_telegram(output, output_root)
 
     if not skip_telegram:
-        if image_mode != "openai":
-            send_text(
-                token,
-                chat_id,
-                "🖼️ AI image generation is not configured or failed, so this Reel used the local illustrated fallback. Add OPENAI_API_KEY to enable six fresh AI-generated frames per Reel.",
-            )
         hashtags = " ".join(data["hashtags"])
         send_video(token, chat_id, final, f"✅ Original {MOODS[mood]['label']} Story Reel\n\n{data['caption']}\n\n{hashtags}")
         send_text(token, chat_id, "🎵 The Reel uses only original Krishna-flute-inspired devotional music. Voice narration is disabled.")
