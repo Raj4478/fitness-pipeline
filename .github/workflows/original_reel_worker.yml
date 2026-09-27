@@ -44,7 +44,7 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y ffmpeg fonts-noto-core
-          python -m pip install --disable-pip-version-check -U requests edge-tts
+          python -m pip install --disable-pip-version-check -U requests edge-tts pillow
       - name: Validate generator
         run: python -m py_compile youtube-telegram-bot/scripts/create_original_reel.py
       - name: Generate and return original Reel
