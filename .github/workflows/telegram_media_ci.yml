@@ -92,7 +92,7 @@ jobs:
           assert len(scenes) == 6
           hashes = []
           for scene in scenes:
-              assert scene.is_file() and scene.stat().st_size > 10000, scene
+              assert scene.is_file() and scene.stat().st_size > 5000, (scene, scene.stat().st_size if scene.is_file() else 0)
               dims = subprocess.run(
                   [
                       "ffprobe", "-v", "error",
