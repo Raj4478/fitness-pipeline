@@ -1,0 +1,58 @@
+name: Cloudflare Workers AI Smoke
+
+on:
+  push:
+    branches:
+      - test/cloudflare-workers-ai
+    paths:
+      - '.github/workflows/cloudflare_workers_ai_smoke.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Verify secrets are present
+        run: |
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          echo "Cloudflare credentials are present"
+
+      - name: Generate test image with Workers AI
+        run: |
+          http_code="$(curl -sS -o response.json -w '%{http_code}' \
+            --request POST \
+            --url "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-2-klein-4b" \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            --form "prompt=A serene golden sunrise over Himalayan mountains, cinematic, no text" \
+            --form "width=512" \
+            --form "height=512")"
+
+          echo "HTTP status: $http_code"
+          python - <<'PY'
+          import base64, json
+          from pathlib import Path
+
+          payload = json.loads(Path("response.json").read_text())
+          if not payload.get("success"):
+              raise SystemExit("Cloudflare API failed: " + json.dumps(payload.get("errors") or payload, ensure_ascii=False)[:1000])
+
+          result = payload.get("result") or {}
+          image = result.get("image")
+          if not image:
+              raise SystemExit("Cloudflare response did not contain result.image")
+
+          raw = base64.b64decode(image)
+          if len(raw) < 1000:
+              raise SystemExit(f"Generated image payload too small: {len(raw)} bytes")
+
+          Path("cloudflare-smoke.png").write_bytes(raw)
+          print(f"Workers AI image generation succeeded: {len(raw)} bytes")
+          PY
+          test "$http_code" = "200"
