@@ -71,6 +71,7 @@ jobs:
             --request POST \
             --url "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/meta/llama-3.1-8b-instruct" \
             --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            --header "cf-aig-gateway-id: default" \
             --header "Content-Type: application/json" \
             --data '{"prompt":"Reply with only OK"}')"
           echo "Quick-start inference HTTP status: $quick_code"
@@ -90,6 +91,7 @@ jobs:
             --request POST \
             --url "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-2-klein-4b" \
             --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            --header "cf-aig-gateway-id: default" \
             --form "prompt=A serene golden sunrise over Himalayan mountains, cinematic, no text" \
             --form "width=512" \
             --form "height=512")"
