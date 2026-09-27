@@ -99,7 +99,7 @@ jobs:
               assert len(set(hashes)) == 6, hashes
               print("Six generated story scenes verified:", ", ".join(path.name for path in scenes))
           PY
-      - name: Verify AI story image generation adapter
+      - name: Verify AI story image generation adapters
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -113,39 +113,117 @@ jobs:
           sys.path.insert(0, str(scripts))
           import create_original_reel as reel
 
-          calls = []
-          class FakeResponse:
+          def encoded_image(index):
+              source = Image.new("RGB", (1152, 2048), (35 + index * 20, 65 + index * 14, 100 + index * 11))
+              buf = io.BytesIO()
+              source.save(buf, format="JPEG", quality=94)
+              return base64.b64encode(buf.getvalue()).decode("ascii")
+
+          class FakeGeminiResponse:
               ok = True
               status_code = 200
               text = ""
-              def __init__(self, encoded):
-                  self.encoded = encoded
+              def __init__(self, index):
+                  self.index = index
               def json(self):
-                  return {"data": [{"b64_json": self.encoded}]}
+                  return {
+                      "status": "completed",
+                      "steps": [{
+                          "type": "model_output",
+                          "content": [{
+                              "type": "image",
+                              "mime_type": "image/jpeg",
+                              "data": encoded_image(self.index),
+                          }],
+                      }],
+                  }
 
-          def fake_post(*args, **kwargs):
-              calls.append(kwargs.get("json", {}))
-              index = len(calls)
-              source = Image.new("RGB", (1024, 1536), (35 + index * 20, 65 + index * 14, 100 + index * 11))
-              buf = io.BytesIO()
-              source.save(buf, format="JPEG", quality=90)
-              encoded = base64.b64encode(buf.getvalue()).decode("ascii")
-              return FakeResponse(encoded)
+          class FakeOpenAIResponse:
+              ok = True
+              status_code = 200
+              text = ""
+              def __init__(self, index):
+                  self.index = index
+              def json(self):
+                  return {"data": [{"b64_json": encoded_image(self.index)}]}
 
           original_post = reel.requests.post
-          reel.requests.post = fake_post
           try:
-              with tempfile.TemporaryDirectory(prefix="ai-story-scenes-") as temp:
+              gemini_calls = []
+              def fake_gemini_post(*args, **kwargs):
+                  gemini_calls.append(kwargs.get("json", {}))
+                  return FakeGeminiResponse(len(gemini_calls))
+
+              reel.requests.post = fake_gemini_post
+              with tempfile.TemporaryDirectory(prefix="gemini-story-scenes-") as temp:
+                  scenes = reel.generate_gemini_story_scenes(Path(temp), "overthinking at night", "peaceful", "fake-key")
+                  assert len(scenes) == 6
+                  assert len(gemini_calls) == 6
+                  for request in gemini_calls:
+                      assert request["model"] == "gemini-3.1-flash-image"
+                      assert request["response_format"]["aspect_ratio"] == "9:16"
+                      assert request["response_format"]["image_size"] == "2K"
+                      assert request["generation_config"]["thinking_level"] == "high"
+                  for scene in scenes:
+                      with Image.open(scene) as image:
+                          assert image.size == (1080, 1920), image.size
+                          assert image.format == "JPEG", image.format
+
+              openai_calls = []
+              def fake_openai_post(*args, **kwargs):
+                  openai_calls.append(kwargs.get("json", {}))
+                  return FakeOpenAIResponse(len(openai_calls))
+
+              reel.requests.post = fake_openai_post
+              with tempfile.TemporaryDirectory(prefix="openai-story-scenes-") as temp:
                   scenes = reel.generate_openai_story_scenes(Path(temp), "overthinking at night", "peaceful", "fake-key")
                   assert len(scenes) == 6
-                  assert len(calls) == 6
+                  assert len(openai_calls) == 6
+                  for request in openai_calls:
+                      assert request["quality"] == "medium"
+                      assert request["size"] == "1088x1936"
                   for scene in scenes:
                       with Image.open(scene) as image:
                           assert image.size == (1080, 1920), image.size
                           assert image.format == "JPEG", image.format
           finally:
               reel.requests.post = original_post
-          print("AI story image adapter verified:", len(calls), "generation calls")
+
+          print("Gemini and OpenAI high-quality image adapters verified")
+          PY
+
+      - name: Verify production image generation fails closed
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import sys
+          import tempfile
+
+          scripts = Path("youtube-telegram-bot/scripts").resolve()
+          sys.path.insert(0, str(scripts))
+          import create_original_reel as reel
+
+          original_dry = os.environ.pop("ORIGINAL_REEL_DRY_RUN", None)
+          original_gemini = reel.generate_gemini_story_scenes
+          original_openai = reel.generate_openai_story_scenes
+          reel.generate_gemini_story_scenes = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("gemini_down"))
+          reel.generate_openai_story_scenes = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("openai_down"))
+          try:
+              with tempfile.TemporaryDirectory(prefix="provider-fail-closed-") as temp:
+                  try:
+                      reel.build_story_scenes(Path(temp), "overthinking", "peaceful", "fake-gemini", "fake-openai")
+                      raise AssertionError("expected high-quality provider failure")
+                  except RuntimeError as exc:
+                      message = str(exc)
+                      assert "refusing local low-quality fallback" in message, message
+          finally:
+              reel.generate_gemini_story_scenes = original_gemini
+              reel.generate_openai_story_scenes = original_openai
+              if original_dry is not None:
+                  os.environ["ORIGINAL_REEL_DRY_RUN"] = original_dry
+
+          print("Production image generation correctly refuses low-quality fallback")
           PY
       - name: Verify editorial API failure fallback
         run: |
