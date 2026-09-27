@@ -2,10 +2,11 @@ import { readFileSync } from 'node:fs';
 import { extractYouTubeId, fetchYouTubeMetadata } from '../src/youtube.js';
 import { generateContent } from '../src/content.js';
 import { parseAllowHosts, validateDownloadUrl } from '../src/download-policy.js';
-import { hasRightsAcknowledgement, queueAuthorizedDownload } from '../src/download-dispatch.js';
+import { hasRightsAcknowledgement, queueAuthorizedDownload, queueOriginalReel } from '../src/download-dispatch.js';
 import { sendPermittedVideo, sendDocument, sendText, editText, telegramCall } from '../src/telegram.js';
 import { HELP, PRIVACY, FORMATS, VARIANTS, EXAMPLES, repliedDraft, firstUrl, readAction, readDownloadAction, downloadConfirmKeyboard, formatKeyboard, sourceSummary, formatDraft } from '../src/experience.js';
 import { boundedFetch } from '../src/network.js';
+import { parseCreateReelCommand, readReelMoodAction, readReelReply, reelMoodKeyboard, reelTopicPrompt, REEL_MOODS } from '../src/original-reel.js';
 
 const DOWNLOAD_CONFIRMATION = 'Only continue if you own this video or have permission to download and reuse it. The worker will not use cookies or bypass private, members-only, premium, sign-in, DRM, or geo restrictions.';
 const DOWNLOAD_QUEUED = '⬇️ Download queued. The on-demand yt-dlp worker will return an MP4 here if the source is accessible and the file can be kept within Telegram’s upload limit.';
@@ -39,6 +40,19 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
     try {
       if (callback) {
         await telegramCall(token, 'answerCallbackQuery', { callback_query_id: callback.id }, io);
+
+        const reelMoodAction = readReelMoodAction(callback.data, userId, secret, now());
+        if (reelMoodAction) {
+          const { mood } = reelMoodAction;
+          await sendText(token, chatId, reelTopicPrompt(mood), io, {
+            reply_markup: {
+              force_reply: true,
+              selective: true,
+              input_field_placeholder: 'e.g. overthinking'
+            }
+          });
+          return success('reel_topic_prompt');
+        }
 
         const downloadAction = readDownloadAction(callback.data, userId, secret, now());
         if (downloadAction) {
@@ -76,6 +90,58 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
       const text = String(message.text || message.caption || '').trim();
       const command = text.match(/^\/(\w+)(?:@\w+)?(?:\s|$)/)?.[1]?.toLowerCase();
       if (!callback) {
+        const repliedReel = readReelReply(message, token);
+        if (repliedReel) {
+          stage = 'original_reel_dispatch';
+          await queueOriginalReel({ ...repliedReel, chatId }, { env, fetchImpl: io });
+          await sendText(
+            token,
+            chatId,
+            `🎨 Original Reel queued.\nMood: ${REEL_MOODS[repliedReel.mood].label}\nTopic: ${repliedReel.topic}\n\nI’ll send the finished MP4 and caption here when the GitHub worker completes.`,
+            io
+          );
+          return success('original_reel_queued');
+        }
+
+        const createReel = parseCreateReelCommand(text);
+        if (createReel) {
+          if (createReel.mode === 'choose') {
+            await sendText(token, chatId, '🎨 Choose the mood for your new original devotional Reel:', io, {
+              reply_markup: reelMoodKeyboard(userId, secret, now())
+            });
+            return success('reel_mood_prompt');
+          }
+          if (createReel.mode === 'invalid_mood') {
+            await sendText(token, chatId, `Choose one of: ${Object.keys(REEL_MOODS).join(', ')}.\n\nOr just send /create_reel and tap a mood.`, io);
+            return success('invalid_reel_mood');
+          }
+          if (createReel.mode === 'ask_topic') {
+            await sendText(token, chatId, reelTopicPrompt(createReel.mood), io, {
+              reply_markup: {
+                force_reply: true,
+                selective: true,
+                input_field_placeholder: 'e.g. overthinking'
+              }
+            });
+            return success('reel_topic_prompt');
+          }
+          if (createReel.mode === 'invalid_topic') {
+            await sendText(token, chatId, 'Keep the Reel topic between 2 and 140 characters.', io);
+            return success('invalid_reel_topic');
+          }
+          if (createReel.mode === 'queue') {
+            stage = 'original_reel_dispatch';
+            await queueOriginalReel({ mood: createReel.mood, topic: createReel.topic, chatId }, { env, fetchImpl: io });
+            await sendText(
+              token,
+              chatId,
+              `🎨 Original Reel queued.\nMood: ${REEL_MOODS[createReel.mood].label}\nTopic: ${createReel.topic}\n\nI’ll send the finished MP4 and caption here when the GitHub worker completes.`,
+              io
+            );
+            return success('original_reel_queued');
+          }
+        }
+
         if (command === 'start' || command === 'help') { await sendText(token, chatId, HELP, io); return success('help'); }
         if (command === 'examples') { await sendText(token, chatId, EXAMPLES, io); return success('examples'); }
         if (command === 'privacy') { await sendText(token, chatId, PRIVACY, io); return success('privacy'); }
@@ -122,7 +188,7 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
           if (!instructions || instructions.length > 500) { await sendText(token, chatId, 'Add 1–500 characters of editing instructions after /rewrite, for example: Make it friendlier and finish with a question.', io); return success('invalid_instructions'); }
           previousDraft = draft.text; format = draft.format; videoId = extractYouTubeId(draft.source);
         }
-        if (command && !['analyze', 'rewrite', ...Object.keys(VARIANTS), ...Object.keys(FORMATS)].includes(command)) {
+        if (command && !['analyze', 'rewrite', 'create_reel', ...Object.keys(VARIANTS), ...Object.keys(FORMATS)].includes(command)) {
           await sendText(token, chatId, 'I do not recognise that command. Paste a YouTube link to choose a format, paste an Instagram Reel to download it, or use /help.', io);
           return success('unknown_command');
         }
@@ -176,7 +242,9 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
         ? 'I could not read that video’s public details. Check that it is public and the link opens, then try again.'
         : stage === 'download_dispatch'
           ? 'I could not queue the download worker. Check the GitHub Actions token/repository configuration and try again.'
-          : 'Your request could not be completed this time. Please try again in a moment.';
+          : stage === 'original_reel_dispatch'
+            ? 'I could not queue the original Reel generator. Check the GitHub Actions configuration and try again.'
+            : 'Your request could not be completed this time. Please try again in a moment.';
       const recovery = videoId && stage !== 'download_dispatch' ? { reply_markup: formatKeyboard(videoId, userId, secret, now()) } : {};
       await (progressId
         ? editText(token, chatId, progressId, errorMessage, fetchImpl, recovery)

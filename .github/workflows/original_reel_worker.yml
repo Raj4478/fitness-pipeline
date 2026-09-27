@@ -1,0 +1,51 @@
+name: Original Devotional Reel Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      mood:
+        description: 'Mood preset'
+        required: true
+        type: string
+      topic:
+        description: 'Original Reel topic'
+        required: true
+        type: string
+      chat_id:
+        description: 'Telegram chat ID for delivery'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: original-devotional-reel-${{ inputs.chat_id }}
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ORIGINAL_REEL_MOOD: ${{ inputs.mood }}
+      ORIGINAL_REEL_TOPIC: ${{ inputs.topic }}
+      ORIGINAL_REEL_CHAT_ID: ${{ inputs.chat_id }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GROQ_REEL_MODEL: 'openai/gpt-oss-20b'
+      ORIGINAL_REEL_TTS_VOICE: 'hi-IN-MadhurNeural'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Reel runtime
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg fonts-noto-core
+          python -m pip install --disable-pip-version-check -U requests edge-tts
+      - name: Validate generator
+        run: python -m py_compile youtube-telegram-bot/scripts/create_original_reel.py
+      - name: Generate and return original Reel
+        run: python youtube-telegram-bot/scripts/create_original_reel.py
