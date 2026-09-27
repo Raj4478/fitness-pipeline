@@ -39,6 +39,21 @@ jobs:
           print("Errors:", payload.get("errors") or [])
           PY
 
+      - name: Verify token against configured account
+        run: |
+          account_code="$(curl -sS -o account-token.json -w '%{http_code}' \
+            "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/tokens/verify" \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")"
+          echo "Account token verify HTTP status: $account_code"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("account-token.json").read_text())
+          print("Account-token success:", payload.get("success"))
+          print("Account-token status:", (payload.get("result") or {}).get("status"))
+          print("Account-token errors:", payload.get("errors") or [])
+          PY
+
       - name: Generate test image with Workers AI
         run: |
           http_code="$(curl -sS -o response.json -w '%{http_code}' \
