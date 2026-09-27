@@ -84,6 +84,30 @@ jobs:
               print("Quick-start result present:", bool(payload.get("result")))
           PY
 
+      - name: Generate premium hook image with FLUX 9B
+        run: |
+          premium_code="$(curl -sS -o premium.json -w '%{http_code}' \
+            --request POST \
+            --url "https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/black-forest-labs/flux-2-klein-9b" \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}" \
+            --header "Content-Type: multipart/form-data" \
+            --form 'prompt=serene cinematic devotional portrait, premium lighting, no text' \
+            --form width=512 \
+            --form height=512)"
+          echo "FLUX 9B HTTP status: $premium_code"
+          python - <<'PY'
+          import base64, json
+          from pathlib import Path
+          payload = json.loads(Path("premium.json").read_text())
+          if not payload.get("success"):
+              raise SystemExit("FLUX 9B failed: " + json.dumps(payload.get("errors") or payload, ensure_ascii=False)[:1000])
+          raw = base64.b64decode((payload.get("result") or {}).get("image") or "")
+          if len(raw) < 1000:
+              raise SystemExit("FLUX 9B image missing")
+          print(f"FLUX 9B generation succeeded: {len(raw)} bytes")
+          PY
+          test "$premium_code" = "200"
+
       - name: Generate test image with Workers AI
         run: |
           http_code="$(curl -sS -o response.json -w '%{http_code}' \
