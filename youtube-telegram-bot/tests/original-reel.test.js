@@ -143,4 +143,4 @@ test('reply parser only accepts replies to this bot and valid topics', () => {
   assert.deepEqual(readReelReply(good, env.TELEGRAM_BOT_TOKEN), { mood: 'motivational', topic: 'anger' });
   assert.equal(readReelReply({ ...good, reply_to_message: { ...good.reply_to_message, from: { id: 999, is_bot: true } } }, env.TELEGRAM_BOT_TOKEN), null);
   assert.deepEqual(parseCreateReelCommand('/create_reel joyful gratitude'), { mode: 'queue', mood: 'joyful', topic: 'gratitude' });
-}
+});
