@@ -73,7 +73,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fonts-noto-core
           python -m pip install --disable-pip-version-check -q yt-dlp requests pillow
-      - name: Verify generated six-scene story frames
+      - name: Verify generated five-scene story frames
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -88,7 +88,7 @@ jobs:
 
           with tempfile.TemporaryDirectory(prefix="story-scenes-") as temp:
               scenes = reel.generate_fallback_story_scenes(Path(temp), "peaceful")
-              assert len(scenes) == 6, scenes
+              assert len(scenes) == 5, scenes
               hashes = []
               for scene in scenes:
                   assert scene.is_file() and scene.stat().st_size > 20000, (scene, scene.stat().st_size)
@@ -96,10 +96,11 @@ jobs:
                       assert image.size == (1080, 1920), (scene, image.size)
                       assert image.format == "JPEG", (scene, image.format)
                   hashes.append(hashlib.sha256(scene.read_bytes()).hexdigest())
-              assert len(set(hashes)) == 6, hashes
-              print("Six generated story scenes verified:", ", ".join(path.name for path in scenes))
+              assert len(set(hashes)) == 5, hashes
+              print("Five generated story scenes verified:", ", ".join(path.name for path in scenes))
           PY
-      - name: Verify AI story image generation adapters
+
+      - name: Verify Cloudflare FLUX story image adapter
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -114,12 +115,18 @@ jobs:
           import create_original_reel as reel
 
           def encoded_image(index):
-              source = Image.new("RGB", (1152, 2048), (35 + index * 20, 65 + index * 14, 100 + index * 11))
+              source = Image.new(
+                  "RGB",
+                  (1080, 1920),
+                  (35 + index * 20, 65 + index * 14, 100 + index * 11),
+              )
               buf = io.BytesIO()
               source.save(buf, format="JPEG", quality=94)
               return base64.b64encode(buf.getvalue()).decode("ascii")
 
-          class FakeGeminiResponse:
+          calls = []
+
+          class FakeResponse:
               ok = True
               status_code = 200
               text = ""
@@ -127,61 +134,43 @@ jobs:
                   self.index = index
               def json(self):
                   return {
-                      "status": "completed",
-                      "steps": [{
-                          "type": "model_output",
-                          "content": [{
-                              "type": "image",
-                              "mime_type": "image/jpeg",
-                              "data": encoded_image(self.index),
-                          }],
-                      }],
+                      "success": True,
+                      "errors": [],
+                      "result": {"image": encoded_image(self.index)},
                   }
 
-          class FakeOpenAIResponse:
-              ok = True
-              status_code = 200
-              text = ""
-              def __init__(self, index):
-                  self.index = index
-              def json(self):
-                  return {"data": [{"b64_json": encoded_image(self.index)}]}
+          def fake_post(url, **kwargs):
+              calls.append({"url": url, "files": kwargs.get("files", {})})
+              return FakeResponse(len(calls))
 
           original_post = reel.requests.post
+          reel.requests.post = fake_post
           try:
-              gemini_calls = []
-              def fake_gemini_post(*args, **kwargs):
-                  gemini_calls.append(kwargs.get("json", {}))
-                  return FakeGeminiResponse(len(gemini_calls))
-
-              reel.requests.post = fake_gemini_post
-              with tempfile.TemporaryDirectory(prefix="gemini-story-scenes-") as temp:
-                  scenes = reel.generate_gemini_story_scenes(Path(temp), "overthinking at night", "peaceful", "fake-key")
-                  assert len(scenes) == 6
-                  assert len(gemini_calls) == 6
-                  for request in gemini_calls:
-                      assert request["model"] == "gemini-3.1-flash-image"
-                      assert request["response_format"]["aspect_ratio"] == "9:16"
-                      assert request["response_format"]["image_size"] == "2K"
-                      assert request["generation_config"]["thinking_level"] == "high"
-                  for scene in scenes:
-                      with Image.open(scene) as image:
-                          assert image.size == (1080, 1920), image.size
-                          assert image.format == "JPEG", image.format
-
-              openai_calls = []
-              def fake_openai_post(*args, **kwargs):
-                  openai_calls.append(kwargs.get("json", {}))
-                  return FakeOpenAIResponse(len(openai_calls))
-
-              reel.requests.post = fake_openai_post
-              with tempfile.TemporaryDirectory(prefix="openai-story-scenes-") as temp:
-                  scenes = reel.generate_openai_story_scenes(Path(temp), "overthinking at night", "peaceful", "fake-key")
-                  assert len(scenes) == 6
-                  assert len(openai_calls) == 6
-                  for request in openai_calls:
-                      assert request["quality"] == "medium"
-                      assert request["size"] == "1088x1936"
+              with tempfile.TemporaryDirectory(prefix="cloudflare-story-scenes-") as temp:
+                  scenes, mode = reel.generate_cloudflare_story_scenes(
+                      Path(temp),
+                      "overthinking at night",
+                      "peaceful",
+                      "account-id",
+                      "api-token",
+                  )
+                  assert len(scenes) == 5, scenes
+                  assert len(calls) == 5, calls
+                  assert mode == "cloudflare_hybrid_9b_4b", mode
+                  assert calls[0]["url"].endswith("/@cf/black-forest-labs/flux-2-klein-9b"), calls[0]["url"]
+                  for call in calls[1:]:
+                      assert call["url"].endswith("/@cf/black-forest-labs/flux-2-klein-4b"), call["url"]
+                  for call in calls:
+                      fields = call["files"]
+                      assert fields["width"][1] == "1080", fields
+                      assert fields["height"][1] == "1920", fields
+                      assert fields["guidance"][1] == "4.0", fields
+                      assert fields["prompt"][1], fields
+                  assert "input_image_0" not in calls[0]["files"]
+                  assert "input_image_0" not in calls[1]["files"]
+                  assert "input_image_0" in calls[2]["files"]
+                  assert "input_image_0" not in calls[3]["files"]
+                  assert "input_image_0" in calls[4]["files"]
                   for scene in scenes:
                       with Image.open(scene) as image:
                           assert image.size == (1080, 1920), image.size
@@ -189,7 +178,67 @@ jobs:
           finally:
               reel.requests.post = original_post
 
-          print("Gemini and OpenAI high-quality image adapters verified")
+          print("Cloudflare hybrid FLUX adapter verified:", len(calls), "generation calls")
+          PY
+
+      - name: Verify premium hook falls back to FLUX 4B
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          import io
+          import sys
+          import tempfile
+          from PIL import Image
+
+          scripts = Path("youtube-telegram-bot/scripts").resolve()
+          sys.path.insert(0, str(scripts))
+          import create_original_reel as reel
+
+          def image_payload(index):
+              source = Image.new("RGB", (1080, 1920), (40 + index * 15, 80 + index * 10, 120 + index * 8))
+              buf = io.BytesIO()
+              source.save(buf, format="JPEG", quality=92)
+              return base64.b64encode(buf.getvalue()).decode("ascii")
+
+          calls = []
+
+          class FakeResponse:
+              status_code = 200
+              text = ""
+              def __init__(self, ok, index):
+                  self.ok = ok
+                  self.index = index
+              def json(self):
+                  if not self.ok:
+                      return {"success": False, "errors": [{"code": 999, "message": "premium unavailable"}]}
+                  return {"success": True, "errors": [], "result": {"image": image_payload(self.index)}}
+
+          def fake_post(url, **kwargs):
+              calls.append(url)
+              if len(calls) == 1 and url.endswith("flux-2-klein-9b"):
+                  response = FakeResponse(False, 0)
+                  response.status_code = 429
+                  response.text = '{"errors":[{"message":"quota"}]}'
+                  return response
+              return FakeResponse(True, len(calls))
+
+          original_post = reel.requests.post
+          reel.requests.post = fake_post
+          try:
+              with tempfile.TemporaryDirectory(prefix="cloudflare-premium-fallback-") as temp:
+                  scenes, mode = reel.generate_cloudflare_story_scenes(
+                      Path(temp), "overthinking", "peaceful", "account", "token"
+                  )
+                  assert len(scenes) == 5
+                  assert mode == "cloudflare_4b", mode
+                  assert calls[0].endswith("flux-2-klein-9b"), calls
+                  assert calls[1].endswith("flux-2-klein-4b"), calls
+                  assert len(calls) == 6, calls
+          finally:
+              reel.requests.post = original_post
+
+          print("Premium hook 9B -> 4B fallback verified")
           PY
 
       - name: Verify production image generation fails closed
@@ -205,21 +254,19 @@ jobs:
           import create_original_reel as reel
 
           original_dry = os.environ.pop("ORIGINAL_REEL_DRY_RUN", None)
-          original_gemini = reel.generate_gemini_story_scenes
-          original_openai = reel.generate_openai_story_scenes
-          reel.generate_gemini_story_scenes = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("gemini_down"))
-          reel.generate_openai_story_scenes = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("openai_down"))
+          original_cloudflare = reel.generate_cloudflare_story_scenes
+          reel.generate_cloudflare_story_scenes = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("cloudflare_down"))
           try:
               with tempfile.TemporaryDirectory(prefix="provider-fail-closed-") as temp:
                   try:
-                      reel.build_story_scenes(Path(temp), "overthinking", "peaceful", "fake-gemini", "fake-openai")
+                      reel.build_story_scenes(Path(temp), "overthinking", "peaceful", "account", "token")
                       raise AssertionError("expected high-quality provider failure")
                   except RuntimeError as exc:
                       message = str(exc)
                       assert "refusing local low-quality fallback" in message, message
+                      assert "Cloudflare Workers AI failed" in message, message
           finally:
-              reel.generate_gemini_story_scenes = original_gemini
-              reel.generate_openai_story_scenes = original_openai
+              reel.generate_cloudflare_story_scenes = original_cloudflare
               if original_dry is not None:
                   os.environ["ORIGINAL_REEL_DRY_RUN"] = original_dry
 
@@ -322,7 +369,7 @@ jobs:
         run: |
           result="$(python youtube-telegram-bot/scripts/create_original_reel.py)"
           echo "$result"
-          echo "$result" | grep -q '"story_scenes": 6'
+          echo "$result" | grep -q '"story_scenes": 5'
           echo "$result" | grep -q '"image_mode": "local_fallback"'
           echo "$result" | grep -q '"tts": false'
           echo "$result" | grep -q '"voice": false'

@@ -24,7 +24,7 @@ ASSETS = ROOT / "assets"
 DURATION = 19.2
 WIDTH = 1080
 HEIGHT = 1920
-SCENE_DURATIONS = (2.8, 3.0, 3.0, 3.3, 3.8, 3.3)
+SCENE_DURATIONS = (3.0, 3.4, 3.6, 5.4, 3.8)
 MAX_TELEGRAM_BYTES = 49 * 1024 * 1024
 KRISHNA_SHA256 = "2e4b59b4afb465314e510707faa0e96de46641cbb67b4b12990ffb3c4eb66c73"
 MOODS = {
@@ -222,6 +222,7 @@ def _scene_phone_down() -> Image.Image:
 
 
 def generate_fallback_story_scenes(output_root: Path, mood: str) -> list[Path]:
+    """Deterministic five-frame fallback used only by local/CI dry runs."""
     output_root.mkdir(parents=True, exist_ok=True)
     krishna_path = materialize_krishna(output_root / "krishna-source.jpg")
     krishna = Image.open(krishna_path).convert("RGB")
@@ -238,15 +239,6 @@ def generate_fallback_story_scenes(output_root: Path, mood: str) -> list[Path]:
             glow_center=(720, 560),
         ),
         _scene_reflection_sunrise(),
-        _krishna_scene(
-            krishna,
-            zoom=1.18,
-            x_bias=-0.08,
-            y_bias=-0.16,
-            tint=(139, 75, 18),
-            tint_alpha=36,
-            glow_center=(660, 620),
-        ),
         _scene_phone_down(),
         _krishna_scene(
             krishna,
@@ -259,7 +251,6 @@ def generate_fallback_story_scenes(output_root: Path, mood: str) -> list[Path]:
         ),
     ]
 
-    # Mood-level grading is deliberately subtle; no blur filler or fake camera effects.
     cfg = MOODS[mood]
     paths: list[Path] = []
     for index, scene in enumerate(scenes, start=1):
@@ -269,38 +260,43 @@ def generate_fallback_story_scenes(output_root: Path, mood: str) -> list[Path]:
         graded.save(path, "JPEG", quality=91, subsampling=0, optimize=True)
         paths.append(path)
 
-    if len({hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}) != 6:
+    if len(paths) != 5:
+        raise RuntimeError("story_scene_count")
+    if len({hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}) != 5:
         raise RuntimeError("story_scene_assets_not_unique")
     return paths
 
 
 def _story_image_prompts(topic: str, mood: str) -> list[str]:
     topic_clean = clean(topic, 120)
+    mood_clean = clean(mood, 32)
     style = (
-        "premium vertical 9:16 cinematic Indian devotional artwork for a high-end Instagram Reel, "
-        "realistic faces and anatomy, crisp eyes and hands, intricate fabric and jewelry detail, "
+        "premium vertical 9:16 cinematic Indian devotional fine-art realism for a high-end Instagram Reel, "
+        "lifelike faces and anatomy, natural hands, crisp eyes, intricate fabric and jewelry detail, "
         "natural skin texture, cinematic depth, controlled highlights, rich shadow detail, "
         "sharp focal subject with graceful depth of field, subtle blue and warm gold color harmony, "
-        "no text, no subtitles, no watermark, no collage, no split screen, no poster border, "
+        "emotionally authentic, reverent rather than theatrical, no text, no subtitles, no watermark, "
+        "no collage, no split screen, no poster border, no extra fingers, no distorted hands, "
         "no low-resolution look, no smeared details, one full-frame scene"
     )
     person = (
         "the same anonymous young Indian man in his mid-20s, short dark hair, simple neutral clothing, "
-        "shown respectfully and naturally; keep his appearance consistent across human scenes"
+        "shown respectfully and naturally; preserve his facial identity and clothing across human scenes"
     )
     return [
-        f"{style}. Scene 1: {person}, awake late at night in a quiet bedroom, sitting on the edge of the bed, "
-        f"phone glow nearby, emotionally restless because of {topic_clean}, moonlight through a window, intimate cinematic framing.",
+        f"{style}. Scene 1, premium hook frame: {person}, awake late at night in a quiet bedroom, "
+        f"sitting on the edge of the bed and struggling with {topic_clean}; phone glow nearby, a small tasteful Krishna idol "
+        f"beside a warm diya, moonlight through a window, intimate cinematic framing, {mood_clean} emotional tone.",
         f"{style}. Scene 2: serene Krishna with flute and peacock feather near a moonlit riverside temple, "
-        f"gentle compassionate presence, devotional not theatrical, calm blue-gold atmosphere, symbolizing reassurance about {topic_clean}.",
-        f"{style}. Scene 3: {person}, alone on peaceful river ghat steps at sunrise, phone put away, quietly reflecting on {topic_clean}, "
-        "soft mist, temple silhouettes in distance, hopeful transition from cool blue to warm amber.",
-        f"{style}. Scene 4: close cinematic devotional portrait of Krishna with flute, warm dawn light, flowers and subtle temple lamps, "
-        f"expression of guidance, surrender and inner steadiness for someone struggling with {topic_clean}.",
-        f"{style}. Scene 5: close-up devotional still life and hands: smartphone placed face-down beside a wooden mala and glowing diya, "
-        f"quiet five-minute pause for naam smaran after feeling overwhelmed by {topic_clean}, warm realistic light, elegant composition.",
-        f"{style}. Scene 6: peaceful Krishna blessing scene at golden dawn by a calm river, flute and peacock feather, soft flower petals, "
-        f"clear emotional resolution after {topic_clean}, spacious composition, serene ending frame.",
+        f"gentle compassionate presence, calm blue-gold atmosphere, beautiful devotional facial detail, "
+        f"symbolizing reassurance and steadiness around {topic_clean}.",
+        f"{style}. Scene 3: {person}, same face and clothing as Scene 1, alone on peaceful river ghat steps at sunrise, "
+        f"phone put away, quietly reflecting on {topic_clean}; soft mist, temple silhouettes, hopeful transition from cool blue to warm amber.",
+        f"{style}. Scene 4: close-up narrative action, the same person's natural hands placing a smartphone face-down beside a wooden mala "
+        f"and glowing diya, small Krishna presence in the background, a five-minute pause for naam smaran after {topic_clean}, "
+        "warm realistic light, elegant uncluttered composition, accurate fingers and objects.",
+        f"{style}. Scene 5, resolution: peaceful Krishna blessing scene at golden dawn by a calm river, flute and peacock feather, "
+        f"soft flower petals, exquisite face and hand detail, spacious premium composition, clear emotional resolution after {topic_clean}.",
     ]
 
 
@@ -314,132 +310,147 @@ def _save_story_frame(raw: bytes, output_root: Path, index: int) -> Path:
         return path
 
 
-def _extract_gemini_image(payload: dict) -> bytes:
-    for step in payload.get("steps") or []:
-        if step.get("type") != "model_output":
-            continue
-        for item in step.get("content") or []:
-            if item.get("type") == "image" and item.get("data"):
-                return base64.b64decode(item["data"])
-    raise RuntimeError("gemini_image_missing_payload")
+def _cloudflare_image_request(
+    account_id: str,
+    api_token: str,
+    model: str,
+    prompt: str,
+    seed: int,
+    reference: Path | None = None,
+) -> bytes:
+    if not account_id or not api_token:
+        raise RuntimeError("cloudflare_credentials_missing")
+
+    fields: dict[str, tuple] = {
+        "prompt": (None, prompt),
+        "width": (None, str(WIDTH)),
+        "height": (None, str(HEIGHT)),
+        "seed": (None, str(seed)),
+        "guidance": (None, "4.0"),
+    }
+    if reference is not None:
+        fields["input_image_0"] = (reference.name, reference.read_bytes(), "image/jpeg")
+
+    endpoint = (
+        f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
+    )
+    response = requests.post(
+        endpoint,
+        headers={"Authorization": f"Bearer {api_token}"},
+        files=fields,
+        timeout=300,
+    )
+    if not response.ok:
+        raise RuntimeError(
+            f"cloudflare_{model.rsplit('/', 1)[-1]}_{response.status_code}:{response.text[:260]}"
+        )
+    payload = response.json()
+    if not payload.get("success"):
+        raise RuntimeError(
+            "cloudflare_unsuccessful:" + json.dumps(payload.get("errors") or payload, ensure_ascii=False)[:260]
+        )
+    encoded = (payload.get("result") or {}).get("image")
+    if not encoded:
+        raise RuntimeError("cloudflare_image_missing_payload")
+    return base64.b64decode(encoded)
 
 
-def generate_gemini_story_scenes(output_root: Path, topic: str, mood: str, api_key: str) -> list[Path]:
-    if not api_key:
-        raise RuntimeError("gemini_image_key_missing")
+def generate_cloudflare_story_scenes(
+    output_root: Path,
+    topic: str,
+    mood: str,
+    account_id: str,
+    api_token: str,
+) -> tuple[list[Path], str]:
+    """Generate five native 1080x1920 frames using one premium 9B hook plus four 4B story frames."""
+    if not account_id or not api_token:
+        raise RuntimeError("cloudflare_credentials_missing")
 
-    model = os.getenv("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image").strip() or "gemini-3.1-flash-image"
-    image_size = os.getenv("GEMINI_IMAGE_SIZE", "2K").strip() or "2K"
+    premium_model = os.getenv(
+        "CLOUDFLARE_IMAGE_MODEL_PREMIUM",
+        "@cf/black-forest-labs/flux-2-klein-9b",
+    ).strip() or "@cf/black-forest-labs/flux-2-klein-9b"
+    fast_model = os.getenv(
+        "CLOUDFLARE_IMAGE_MODEL_FAST",
+        "@cf/black-forest-labs/flux-2-klein-4b",
+    ).strip() or "@cf/black-forest-labs/flux-2-klein-4b"
+
     prompts = _story_image_prompts(topic, mood)
+    if len(prompts) != 5:
+        raise RuntimeError("cloudflare_story_prompt_count")
+
+    seed_base = int(hashlib.sha256(f"{mood}:{topic}".encode("utf-8")).hexdigest()[:8], 16)
     paths: list[Path] = []
+    premium_used = True
 
     for index, prompt in enumerate(prompts, start=1):
-        response = requests.post(
-            "https://generativelanguage.googleapis.com/v1beta/interactions",
-            headers={
-                "x-goog-api-key": api_key,
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "input": [{"type": "text", "text": prompt}],
-                "response_format": {
-                    "type": "image",
-                    "mime_type": "image/jpeg",
-                    "aspect_ratio": "9:16",
-                    "image_size": image_size,
-                },
-                "generation_config": {"thinking_level": "high"},
-            },
-            timeout=240,
-        )
-        if not response.ok:
-            raise RuntimeError(f"gemini_image_{index}_{response.status_code}:{response.text[:220]}")
-        raw = _extract_gemini_image(response.json())
+        model = premium_model if index == 1 else fast_model
+        reference = None
+        if index == 3 and len(paths) >= 1:
+            reference = paths[0]
+        elif index == 5 and len(paths) >= 2:
+            reference = paths[1]
+
+        try:
+            raw = _cloudflare_image_request(
+                account_id,
+                api_token,
+                model,
+                prompt,
+                seed_base + index,
+                reference,
+            )
+        except Exception as exc:
+            if index != 1 or model == fast_model:
+                raise
+            premium_used = False
+            print(
+                f"Cloudflare premium hook fallback to 4B: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            raw = _cloudflare_image_request(
+                account_id,
+                api_token,
+                fast_model,
+                prompt,
+                seed_base + index,
+                reference,
+            )
+
         paths.append(_save_story_frame(raw, output_root, index))
 
-    if len(paths) != 6:
-        raise RuntimeError("gemini_story_scene_count")
-    if len({hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}) != 6:
-        raise RuntimeError("gemini_story_scenes_not_unique")
-    return paths
+    if len(paths) != 5:
+        raise RuntimeError("cloudflare_story_scene_count")
+    if len({hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}) != 5:
+        raise RuntimeError("cloudflare_story_scenes_not_unique")
 
-
-def generate_openai_story_scenes(output_root: Path, topic: str, mood: str, api_key: str) -> list[Path]:
-    if not api_key:
-        raise RuntimeError("openai_image_key_missing")
-
-    model = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2.5-flare").strip() or "gpt-image-2.5-flare"
-    quality = os.getenv("OPENAI_IMAGE_QUALITY", "medium").strip() or "medium"
-    prompts = _story_image_prompts(topic, mood)
-    paths: list[Path] = []
-
-    for index, prompt in enumerate(prompts, start=1):
-        response = requests.post(
-            "https://api.openai.com/v1/images/generations",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "prompt": prompt,
-                "n": 1,
-                "size": "1088x1936",
-                "quality": quality,
-                "output_format": "jpeg",
-                "output_compression": 94,
-                "background": "opaque",
-            },
-            timeout=240,
-        )
-        if not response.ok:
-            raise RuntimeError(f"openai_image_{index}_{response.status_code}:{response.text[:220]}")
-        payload = response.json()
-        encoded = ((payload.get("data") or [{}])[0]).get("b64_json")
-        if not encoded:
-            raise RuntimeError(f"openai_image_{index}_missing_payload")
-        paths.append(_save_story_frame(base64.b64decode(encoded), output_root, index))
-
-    if len(paths) != 6:
-        raise RuntimeError("openai_story_scene_count")
-    if len({hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}) != 6:
-        raise RuntimeError("openai_story_scenes_not_unique")
-    return paths
+    return paths, ("cloudflare_hybrid_9b_4b" if premium_used else "cloudflare_4b")
 
 
 def build_story_scenes(
     output_root: Path,
     topic: str,
     mood: str,
-    gemini_api_key: str,
-    openai_api_key: str,
+    cloudflare_account_id: str,
+    cloudflare_api_token: str,
 ) -> tuple[list[Path], str]:
     if os.getenv("ORIGINAL_REEL_DRY_RUN") == "1":
         return generate_fallback_story_scenes(output_root, mood), "local_fallback"
 
-    errors: list[str] = []
+    try:
+        return generate_cloudflare_story_scenes(
+            output_root,
+            topic,
+            mood,
+            cloudflare_account_id,
+            cloudflare_api_token,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "high_quality_image_generation_failed; refusing local low-quality fallback; "
+            f"Cloudflare Workers AI failed: {type(exc).__name__}: {exc}"
+        ) from exc
 
-    if gemini_api_key:
-        try:
-            return generate_gemini_story_scenes(output_root, topic, mood, gemini_api_key), "gemini"
-        except Exception as exc:
-            message = f"Gemini image generation failed: {type(exc).__name__}: {exc}"
-            errors.append(message)
-            print(message, file=sys.stderr)
-
-    if openai_api_key:
-        try:
-            return generate_openai_story_scenes(output_root, topic, mood, openai_api_key), "openai"
-        except Exception as exc:
-            message = f"OpenAI image generation failed: {type(exc).__name__}: {exc}"
-            errors.append(message)
-            print(message, file=sys.stderr)
-
-    details = " | ".join(errors) if errors else "no image-provider credentials available"
-    raise RuntimeError(
-        "high_quality_image_generation_failed; refusing local low-quality fallback; " + details
-    )
 
 def fallback_script(topic: str, mood: str) -> dict:
     topic_clean = clean(topic, 90)
@@ -498,15 +509,14 @@ Mood: {mood_desc}
 This is NOT a quote from Premanand Ji or any other teacher. Do not attribute statements to a real person.
 Use natural Hindi in Devanagari. Keep it respectful and useful.
 
-The Reel uses SIX different full-screen story images in this exact visual arc:
-1) a restless person awake at night,
+The Reel uses FIVE different full-screen story images in this exact visual arc:
+1) a restless person awake at night with a subtle Krishna devotional element,
 2) Krishna appearing as a calm devotional presence,
-3) the person reflecting alone at sunrise,
-4) Krishna offering reassurance/guidance,
-5) the person putting the phone aside for a simple devotional practice,
-6) a peaceful Krishna blessing/resolution.
+3) the same person reflecting alone at sunrise,
+4) the person putting the phone aside for a simple devotional practice,
+5) a peaceful Krishna blessing/resolution.
 
-Write the six text beats so they feel like one continuous micro-story rather than six unrelated quotes.
+Write six text beats as one continuous micro-story. The line3 and takeaway beats share image 4, so keep both especially concise and complementary.
 
 Return exactly these fields:
 hook: 5-11 words, specific question/problem, strong from frame 1, no vague clickbait.
@@ -610,14 +620,14 @@ Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
     t3 = t2 + SCENE_DURATIONS[2]
     t4 = t3 + SCENE_DURATIONS[3]
     t5 = t4 + SCENE_DURATIONS[4]
-    t6 = t5 + SCENE_DURATIONS[5]
+    action_split = t3 + 2.4
     rows = [
         event(t0, t1, "Hook", data["hook"]),
         event(t1, t2, "Body", data["line1"]),
         event(t2, t3, "Body", data["line2"]),
-        event(t3, t4, "Body", data["line3"]),
-        event(t4, t5, "Take", data["takeaway"]),
-        event(t5, t6, "Close", data.get("closing") or "हर विचार का जवाब देना जरूरी नहीं।"),
+        event(t3, action_split, "Body", data["line3"]),
+        event(action_split, t4, "Take", data["takeaway"]),
+        event(t4, t5, "Close", data.get("closing") or "हर विचार का जवाब देना जरूरी नहीं।"),
     ]
     path.write_text(content + "\n".join(rows) + "\n", encoding="utf-8")
 def synth_music(path: Path, mood: str) -> None:
@@ -662,7 +672,7 @@ def synth_music(path: Path, mood: str) -> None:
 
 
 def render(scenes: list[Path], ass: Path, music: Path, mood: str, output: Path) -> None:
-    """Render six stable full-screen story frames with flute music only and no narration."""
+    """Render five stable full-screen story frames with flute music only and no narration."""
     if len(scenes) != len(SCENE_DURATIONS):
         raise RuntimeError("story_scene_duration_mismatch")
 
@@ -756,15 +766,15 @@ def main() -> int:
     output_root = Path(os.getenv("ORIGINAL_REEL_OUTPUT_DIR") or tempfile.mkdtemp(prefix="original-reel-"))
     output_root.mkdir(parents=True, exist_ok=True)
     if not skip_telegram:
-        send_text(token, chat_id, f"🎬 Creating your {MOODS[mood]['label'].lower()} Reel about: {topic}\n\nWriting the original Hindi script and six-scene visual story…")
+        send_text(token, chat_id, f"🎬 Creating your {MOODS[mood]['label'].lower()} Reel about: {topic}\n\nWriting the original Hindi script and five-scene visual story…")
 
     data = generate_script(topic, mood, os.getenv("GROQ_API_KEY", "").strip())
     scenes, image_mode = build_story_scenes(
         output_root,
         topic,
         mood,
-        os.getenv("GEMINI_API_KEY", "").strip(),
-        os.getenv("OPENAI_API_KEY", "").strip(),
+        os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip(),
+        os.getenv("CLOUDFLARE_API_TOKEN", "").strip(),
     )
     ass = output_root / "reel.ass"
     music = output_root / "music.wav"
