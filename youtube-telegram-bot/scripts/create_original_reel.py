@@ -20,9 +20,10 @@ import requests
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
-DURATION = 30.0
-WIDTH = 720
-HEIGHT = 1280
+DURATION = 19.2
+WIDTH = 1080
+HEIGHT = 1920
+SCENE_DURATIONS = (2.8, 3.0, 3.0, 3.3, 3.8, 3.3)
 MAX_TELEGRAM_BYTES = 49 * 1024 * 1024
 KRISHNA_SHA256 = "2e4b59b4afb465314e510707faa0e96de46641cbb67b4b12990ffb3c4eb66c73"
 MOODS = {
@@ -99,7 +100,8 @@ def fallback_script(topic: str, mood: str) -> dict:
         "line2": "कुछ क्षण रुककर साँस और नाम स्मरण पर ध्यान दें, फिर अगला छोटा सही कदम चुनें।",
         "line3": "हर विचार को तुरंत सच मानना जरूरी नहीं; मन को दिशा देना भी एक अभ्यास है।",
         "takeaway": "आज पाँच मिनट फोन अलग रखकर शांत होकर नाम स्मरण करें।",
-        "narration": "जब मन किसी बात में उलझ जाए, तो हर विचार के पीछे भागना जरूरी नहीं। थोड़ी देर रुकिए, साँस को सामान्य होने दीजिए और मन को नाम स्मरण में लगाइए। फिर देखिए कि अभी आपके हाथ में कौन सा छोटा सही कदम है। यही अभ्यास मन को धीरे-धीरे स्थिर करना सिखाता है।",
+        "closing": "हर विचार का जवाब देना जरूरी नहीं।",
+        "narration": "जब मन किसी बात में उलझ जाए, हर विचार के पीछे भागना जरूरी नहीं। पाँच मिनट रुकिए, फोन अलग रखिए, साँस सामान्य होने दीजिए और नाम स्मरण कीजिए। फिर केवल अगला छोटा सही कदम चुनिए।",
         "caption": f"{topic_clean} पर आज की छोटी-सी devotional reflection. पाँच मिनट शांति, स्मरण और एक छोटा सही कदम। 🙏",
         "hashtags": ["#RadheRadhe", "#Bhakti", "#मनकीशांति"],
     }
@@ -113,13 +115,14 @@ def generate_script(topic: str, mood: str, api_key: str) -> dict:
     schema = {
         "type": "object",
         "additionalProperties": False,
-        "required": ["hook", "line1", "line2", "line3", "takeaway", "narration", "caption", "hashtags"],
+        "required": ["hook", "line1", "line2", "line3", "takeaway", "closing", "narration", "caption", "hashtags"],
         "properties": {
             "hook": {"type": "string"},
             "line1": {"type": "string"},
             "line2": {"type": "string"},
             "line3": {"type": "string"},
             "takeaway": {"type": "string"},
+            "closing": {"type": "string"},
             "narration": {"type": "string"},
             "caption": {"type": "string"},
             "hashtags": {"type": "array", "items": {"type": "string"}},
@@ -143,8 +146,9 @@ Use natural Hindi in Devanagari. Keep it respectful and useful.
 Return exactly these fields:
 hook: 5-11 words, specific question/problem, strong from frame 1, no vague clickbait.
 line1, line2, line3: 10-22 Hindi words each, each must add a different useful thought.
-takeaway: 8-18 words, concrete action the viewer can try today.
-narration: 55-80 Hindi words, smooth spoken script matching the on-screen ideas.
+takeaway: 8-16 words, concrete action the viewer can try today.
+closing: 5-12 Hindi words, memorable and shareable, emotionally resonant, no engagement bait.
+narration: 32-42 Hindi words, smooth spoken script that fits a 19-second Reel and matches the on-screen ideas.
 caption: <=170 characters.
 hashtags: exactly 3; include #RadheRadhe or #Bhakti; no #viral/#trending.
 
@@ -184,7 +188,8 @@ No medical diagnosis, guaranteed healing, supernatural promises, invented script
             "line2": clean(data.get("line2"), 170) or fallback["line2"],
             "line3": clean(data.get("line3"), 170) or fallback["line3"],
             "takeaway": clean(data.get("takeaway"), 170) or fallback["takeaway"],
-            "narration": clean(data.get("narration"), 700) or fallback["narration"],
+            "closing": clean(data.get("closing"), 120) or fallback["closing"],
+            "narration": clean(data.get("narration"), 420) or fallback["narration"],
             "caption": clean(data.get("caption"), 170) or fallback["caption"],
             "hashtags": tags,
         }
@@ -206,37 +211,50 @@ def find_font() -> str:
 
 
 def write_ass(data: dict, path: Path) -> None:
-    def event(start: str, end: str, style: str, text: str) -> str:
-        return f"Dialogue: 0,{start},{end},{style},,0,0,0,,{ass_escape(wrap_words(text))}"
+    def event(start: float, end: float, style: str, text: str) -> str:
+        def ts(seconds: float) -> str:
+            whole = int(seconds)
+            centis = int(round((seconds - whole) * 100))
+            if centis == 100:
+                whole += 1
+                centis = 0
+            minutes, secs = divmod(whole, 60)
+            return f"0:{minutes:02d}:{secs:02d}.{centis:02d}"
+        return f"Dialogue: 0,{ts(start)},{ts(end)},{style},,0,0,0,,{ass_escape(wrap_words(text))}"
+
     content = """[Script Info]
 ScriptType: v4.00+
-PlayResX: 720
-PlayResY: 1280
+PlayResX: 1080
+PlayResY: 1920
 WrapStyle: 2
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Hook,Noto Sans Devanagari,58,&H00F4E7C8,&H000000FF,&H00101824,&H88050A12,-1,0,0,0,100,100,0,0,3,3,1,5,52,52,0,1
-Style: Body,Noto Sans Devanagari,43,&H00FFF8EA,&H000000FF,&H00101824,&H99050A12,-1,0,0,0,100,100,0,0,3,3,1,5,64,64,0,1
-Style: Take,Noto Sans Devanagari,45,&H00F4E7C8,&H000000FF,&H00101824,&H99050A12,-1,0,0,0,100,100,0,0,3,3,1,5,58,58,0,1
-Style: Brand,Noto Sans Devanagari,34,&H00FFFFFF,&H000000FF,&H00101824,&H66000000,-1,0,0,0,100,100,0,0,1,2,1,2,40,40,52,1
+Style: Hook,Noto Sans Devanagari,78,&H00F4E7C8,&H000000FF,&H00101824,&H82050A12,-1,0,0,0,100,100,0,0,3,4,1,5,78,78,0,1
+Style: Body,Noto Sans Devanagari,58,&H00FFF8EA,&H000000FF,&H00101824,&H88050A12,-1,0,0,0,100,100,0,0,3,4,1,5,92,92,0,1
+Style: Take,Noto Sans Devanagari,62,&H00F4E7C8,&H000000FF,&H00101824,&H88050A12,-1,0,0,0,100,100,0,0,3,4,1,5,86,86,0,1
+Style: Close,Noto Sans Devanagari,68,&H00FFFFFF,&H000000FF,&H00101824,&H88050A12,-1,0,0,0,100,100,0,0,3,4,1,5,86,86,0,1
 
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
 """
+    t0 = 0.0
+    t1 = t0 + SCENE_DURATIONS[0]
+    t2 = t1 + SCENE_DURATIONS[1]
+    t3 = t2 + SCENE_DURATIONS[2]
+    t4 = t3 + SCENE_DURATIONS[3]
+    t5 = t4 + SCENE_DURATIONS[4]
+    t6 = t5 + SCENE_DURATIONS[5]
     rows = [
-        event("0:00:00.00", "0:00:04.20", "Hook", data["hook"]),
-        event("0:00:04.20", "0:00:10.00", "Body", data["line1"]),
-        event("0:00:10.00", "0:00:16.00", "Body", data["line2"]),
-        event("0:00:16.00", "0:00:22.00", "Body", data["line3"]),
-        event("0:00:22.00", "0:00:28.00", "Take", data["takeaway"]),
-        event("0:00:28.00", "0:00:30.00", "Hook", "राधे राधे 🙏"),
-        "Dialogue: 0,0:00:00.00,0:00:30.00,Brand,,0,0,0,,ORIGINAL DEVOTIONAL REEL",
+        event(t0, t1, "Hook", data["hook"]),
+        event(t1, t2, "Body", data["line1"]),
+        event(t2, t3, "Body", data["line2"]),
+        event(t3, t4, "Body", data["line3"]),
+        event(t4, t5, "Take", data["takeaway"]),
+        event(t5, t6, "Close", data.get("closing") or "हर विचार का जवाब देना जरूरी नहीं।"),
     ]
     path.write_text(content + "\n".join(rows) + "\n", encoding="utf-8")
-
-
 def synth_music(path: Path, mood: str) -> None:
     sr = 32000
     frames = int(DURATION * sr)
@@ -284,7 +302,7 @@ async def make_tts(text: str, output: Path) -> bool:
     try:
         import edge_tts
         voice = os.getenv("ORIGINAL_REEL_TTS_VOICE", "hi-IN-MadhurNeural")
-        await edge_tts.Communicate(text, voice=voice, rate="-4%", volume="-2%").save(str(output))
+        await edge_tts.Communicate(text, voice=voice, rate="+4%", volume="-2%").save(str(output))
         return output.exists() and output.stat().st_size > 1000
     except Exception as exc:
         print(f"tts fallback to text-only: {type(exc).__name__}: {exc}", file=sys.stderr)
@@ -292,18 +310,15 @@ async def make_tts(text: str, output: Path) -> bool:
 
 
 def render(background: Path, ass: Path, music: Path, narration: Path | None, mood: str, output: Path) -> None:
+    """Render the approved stable style: no zoompan, no shake, no blur filler, no crossfades."""
     cfg = MOODS[mood]
     ass_path = str(ass).replace("'", r"\'")
     video_filter = (
-        "scale=760:1340:force_original_aspect_ratio=increase,"
-        "crop=760:1340,"
-        "zoompan=z='min(zoom+0.00022,1.065)':"
-        "x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
-        "d=900:s=720x1280:fps=30,"
+        f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop={WIDTH}:{HEIGHT},"
         f"eq=brightness={cfg['brightness']}:saturation={cfg['saturation']},"
-        "vignette=PI/5,"
+        "unsharp=5:5:0.35:5:5:0.0,"
         f"subtitles='{ass_path}':fontsdir='/usr/share/fonts',"
-        "fade=t=in:st=0:d=0.25,fade=t=out:st=29.4:d=0.6,"
         "format=yuv420p"
     )
     if narration:
@@ -312,15 +327,15 @@ def render(background: Path, ass: Path, music: Path, narration: Path | None, moo
             "-loop", "1", "-framerate", "30", "-i", str(background),
             "-i", str(narration), "-i", str(music),
             "-filter_complex",
-            "[1:a]volume=1.15,highpass=f=90[n];"
-            "[2:a]volume=0.20[m];"
+            "[1:a]volume=1.10,highpass=f=90[n];"
+            "[2:a]volume=0.18[m];"
             "[n][m]amix=inputs=2:duration=longest:dropout_transition=2,"
-            "afade=t=out:st=29:d=1[a]",
+            f"afade=t=out:st={DURATION - 0.8}:d=0.8[a]",
             "-vf", video_filter,
             "-map", "0:v:0", "-map", "[a]",
             "-t", str(DURATION),
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+            "-c:v", "libx264", "-preset", "slow", "-crf", "17",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
             "-movflags", "+faststart", str(output),
         )
     else:
@@ -331,19 +346,17 @@ def render(background: Path, ass: Path, music: Path, narration: Path | None, moo
             "-vf", video_filter,
             "-map", "0:v:0", "-map", "1:a:0",
             "-t", str(DURATION),
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "112k",
+            "-c:v", "libx264", "-preset", "slow", "-crf", "17",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
             "-movflags", "+faststart", str(output),
         )
-
-
 def fit_telegram(path: Path, directory: Path) -> Path:
     if path.stat().st_size <= MAX_TELEGRAM_BYTES:
         return path
     smaller = directory / "original-reel-telegram.mp4"
     run(
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(path),
-        "-vf", "scale=540:960", "-c:v", "libx264", "-preset", "veryfast", "-crf", "29",
+        "-vf", "scale=720:1280:flags=lanczos", "-c:v", "libx264", "-preset", "medium", "-crf", "24",
         "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(smaller),
     )
     if smaller.stat().st_size > MAX_TELEGRAM_BYTES:
