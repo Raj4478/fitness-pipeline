@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import json
@@ -381,7 +380,6 @@ def fallback_script(topic: str, mood: str) -> dict:
         "line3": "मन को रोकना नहीं; उसे शांत और सही दिशा देना सीखना पड़ता है।",
         "takeaway": "आज पाँच मिनट फोन दूर रखें, शांत बैठें और नाम स्मरण करें।",
         "closing": "हर विचार का जवाब देना जरूरी नहीं।",
-        "narration": "जब मन किसी बात में उलझ जाए, हम अक्सर उसी विचार को बार-बार दोहराते हैं। मन को रोकना नहीं, दिशा देना सीखिए। आज पाँच मिनट फोन दूर रखकर शांत बैठें और नाम स्मरण करें। हर विचार का जवाब देना जरूरी नहीं।",
         "caption": f"{topic_clean} पर आज की छोटी-सी devotional reflection. पाँच मिनट शांति, स्मरण और एक छोटा सही कदम। 🙏",
         "hashtags": ["#RadheRadhe", "#Bhakti", "#मनकीशांति"],
     }
@@ -395,7 +393,7 @@ def generate_script(topic: str, mood: str, api_key: str) -> dict:
     schema = {
         "type": "object",
         "additionalProperties": False,
-        "required": ["hook", "line1", "line2", "line3", "takeaway", "closing", "narration", "caption", "hashtags"],
+        "required": ["hook", "line1", "line2", "line3", "takeaway", "closing", "caption", "hashtags"],
         "properties": {
             "hook": {"type": "string"},
             "line1": {"type": "string"},
@@ -403,7 +401,6 @@ def generate_script(topic: str, mood: str, api_key: str) -> dict:
             "line3": {"type": "string"},
             "takeaway": {"type": "string"},
             "closing": {"type": "string"},
-            "narration": {"type": "string"},
             "caption": {"type": "string"},
             "hashtags": {"type": "array", "items": {"type": "string"}},
         },
@@ -440,7 +437,6 @@ line2: 8-18 Hindi words; the realization/turn in the story, not a repetition of 
 line3: 8-18 Hindi words; spiritual redirection or grounded guidance that resolves the tension.
 takeaway: 8-16 words; a concrete phone-down / pause / naam-smaran action the viewer can try today.
 closing: 5-12 Hindi words; a calm memorable resolution, emotionally resonant, no engagement bait.
-narration: 32-42 Hindi words, smooth spoken script that fits a 19-second Reel and matches the on-screen ideas.
 caption: <=170 characters.
 hashtags: exactly 3; include #RadheRadhe or #Bhakti; no #viral/#trending.
 
@@ -481,7 +477,6 @@ No medical diagnosis, guaranteed healing, supernatural promises, invented script
             "line3": clean(data.get("line3"), 170) or fallback["line3"],
             "takeaway": clean(data.get("takeaway"), 170) or fallback["takeaway"],
             "closing": clean(data.get("closing"), 120) or fallback["closing"],
-            "narration": clean(data.get("narration"), 420) or fallback["narration"],
             "caption": clean(data.get("caption"), 170) or fallback["caption"],
             "hashtags": tags,
         }
@@ -588,21 +583,8 @@ def synth_music(path: Path, mood: str) -> None:
         wf.writeframes(pcm.tobytes())
 
 
-async def make_tts(text: str, output: Path) -> bool:
-    if os.getenv("ORIGINAL_REEL_SKIP_TTS") == "1":
-        return False
-    try:
-        import edge_tts
-        voice = os.getenv("ORIGINAL_REEL_TTS_VOICE", "hi-IN-MadhurNeural")
-        await edge_tts.Communicate(text, voice=voice, rate="+4%", volume="-2%").save(str(output))
-        return output.exists() and output.stat().st_size > 1000
-    except Exception as exc:
-        print(f"tts fallback to text-only: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return False
-
-
-def render(scenes: list[Path], ass: Path, music: Path, narration: Path | None, mood: str, output: Path) -> None:
-    """Render six stable full-screen story frames with hard cuts and no camera shake."""
+def render(scenes: list[Path], ass: Path, music: Path, mood: str, output: Path) -> None:
+    """Render six stable full-screen story frames with flute music only and no narration."""
     if len(scenes) != len(SCENE_DURATIONS):
         raise RuntimeError("story_scene_duration_mismatch")
 
@@ -622,9 +604,7 @@ def render(scenes: list[Path], ass: Path, music: Path, narration: Path | None, m
         )
 
     concat_inputs = "".join(f"[v{index}]" for index in range(len(scenes)))
-    video_filters.append(
-        f"{concat_inputs}concat=n={len(scenes)}:v=1:a=0[story]"
-    )
+    video_filters.append(f"{concat_inputs}concat=n={len(scenes)}:v=1:a=0[story]")
     video_filters.append(
         "[story]"
         f"eq=brightness={cfg['brightness']}:saturation={cfg['saturation']},"
@@ -633,43 +613,20 @@ def render(scenes: list[Path], ass: Path, music: Path, narration: Path | None, m
         "format=yuv420p[v]"
     )
 
-    if narration:
-        narration_index = len(scenes)
-        music_index = narration_index + 1
-        filter_complex = ";".join(
-            video_filters
-            + [
-                f"[{narration_index}:a]volume=0.92,highpass=f=90[n]",
-                f"[{music_index}:a]volume=0.48[m]",
-                "[n][m]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0,"
-                f"afade=t=out:st={DURATION - 0.8}:d=0.8,alimiter=limit=0.95[a]",
-            ]
-        )
-        run(
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            *image_inputs,
-            "-i", str(narration), "-i", str(music),
-            "-filter_complex", filter_complex,
-            "-map", "[v]", "-map", "[a]",
-            "-t", str(DURATION),
-            "-c:v", "libx264", "-preset", "slow", "-crf", "17",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
-            "-movflags", "+faststart", str(output),
-        )
-    else:
-        music_index = len(scenes)
-        filter_complex = ";".join(video_filters)
-        run(
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            *image_inputs,
-            "-i", str(music),
-            "-filter_complex", filter_complex,
-            "-map", "[v]", "-map", f"{music_index}:a:0",
-            "-t", str(DURATION),
-            "-c:v", "libx264", "-preset", "slow", "-crf", "17",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
-            "-movflags", "+faststart", str(output),
-        )
+    music_index = len(scenes)
+    filter_complex = ";".join(video_filters)
+    run(
+        "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+        *image_inputs,
+        "-i", str(music),
+        "-filter_complex", filter_complex,
+        "-map", "[v]", "-map", f"{music_index}:a:0",
+        "-t", str(DURATION),
+        "-c:v", "libx264", "-preset", "slow", "-crf", "17",
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+        "-af", "volume=1.0,alimiter=limit=0.95",
+        "-movflags", "+faststart", str(output),
+    )
 
 def fit_telegram(path: Path, directory: Path) -> Path:
     if path.stat().st_size <= MAX_TELEGRAM_BYTES:
@@ -721,7 +678,7 @@ def main() -> int:
     output_root = Path(os.getenv("ORIGINAL_REEL_OUTPUT_DIR") or tempfile.mkdtemp(prefix="original-reel-"))
     output_root.mkdir(parents=True, exist_ok=True)
     if not skip_telegram:
-        send_text(token, chat_id, f"🎬 Creating your {MOODS[mood]['label'].lower()} Reel about: {topic}\n\nWriting the original Hindi script, narration and six-scene visual story…")
+        send_text(token, chat_id, f"🎬 Creating your {MOODS[mood]['label'].lower()} Reel about: {topic}\n\nWriting the original Hindi script and six-scene visual story…")
 
     data = generate_script(topic, mood, os.getenv("GROQ_API_KEY", "").strip())
     scenes, image_mode = build_story_scenes(
@@ -732,12 +689,10 @@ def main() -> int:
     )
     ass = output_root / "reel.ass"
     music = output_root / "music.wav"
-    narration = output_root / "narration.mp3"
     output = output_root / "original-devotional-reel.mp4"
     write_ass(data, ass)
     synth_music(music, mood)
-    has_tts = asyncio.run(make_tts(data["narration"], narration))
-    render(scenes, ass, music, narration if has_tts else None, mood, output)
+    render(scenes, ass, music, mood, output)
     final = fit_telegram(output, output_root)
 
     if not skip_telegram:
@@ -749,14 +704,15 @@ def main() -> int:
             )
         hashtags = " ".join(data["hashtags"])
         send_video(token, chat_id, final, f"✅ Original {MOODS[mood]['label']} Story Reel\n\n{data['caption']}\n\n{hashtags}")
-        send_text(token, chat_id, "🎵 The Reel includes an original Krishna-flute-inspired music bed mixed clearly underneath the narration. No downloaded commercial soundtrack was used.")
+        send_text(token, chat_id, "🎵 The Reel uses only original Krishna-flute-inspired devotional music. Voice narration is disabled.")
     print(json.dumps({
         "ok": True,
         "mood": mood,
         "topic": topic,
         "video": str(final),
         "bytes": final.stat().st_size,
-        "tts": has_tts,
+        "tts": False,
+        "voice": False,
         "story_scenes": len(scenes),
         "image_mode": image_mode,
         "hook": data["hook"],
