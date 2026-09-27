@@ -5,6 +5,7 @@ import asyncio
 import base64
 import hashlib
 import json
+from io import BytesIO
 import math
 import os
 import random
@@ -221,7 +222,7 @@ def _scene_phone_down() -> Image.Image:
     return image
 
 
-def generate_story_scenes(output_root: Path, mood: str) -> list[Path]:
+def generate_fallback_story_scenes(output_root: Path, mood: str) -> list[Path]:
     output_root.mkdir(parents=True, exist_ok=True)
     krishna_path = materialize_krishna(output_root / "krishna-source.jpg")
     krishna = Image.open(krishna_path).convert("RGB")
@@ -272,6 +273,96 @@ def generate_story_scenes(output_root: Path, mood: str) -> list[Path]:
     if len({hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}) != 6:
         raise RuntimeError("story_scene_assets_not_unique")
     return paths
+
+
+def _story_image_prompts(topic: str, mood: str) -> list[str]:
+    topic_clean = clean(topic, 120)
+    style = (
+        "vertical 9:16 cinematic Indian devotional artwork, photorealistic illustration, "
+        "premium film lighting, highly detailed, clean composition, realistic anatomy, "
+        "subtle blue and warm gold color harmony, no text, no subtitles, no watermark, "
+        "no collage, no split screen, one full-frame scene"
+    )
+    person = (
+        "the same anonymous young Indian man in his mid-20s, short dark hair, simple neutral clothing, "
+        "shown respectfully and naturally; keep his appearance consistent across human scenes"
+    )
+    return [
+        f"{style}. Scene 1: {person}, awake late at night in a quiet bedroom, sitting on the edge of the bed, "
+        f"phone glow nearby, emotionally restless because of {topic_clean}, moonlight through a window, intimate cinematic framing.",
+        f"{style}. Scene 2: serene Krishna with flute and peacock feather near a moonlit riverside temple, "
+        f"gentle compassionate presence, devotional not theatrical, calm blue-gold atmosphere, symbolizing reassurance about {topic_clean}.",
+        f"{style}. Scene 3: {person}, alone on peaceful river ghat steps at sunrise, phone put away, quietly reflecting on {topic_clean}, "
+        "soft mist, temple silhouettes in distance, hopeful transition from cool blue to warm amber.",
+        f"{style}. Scene 4: close cinematic devotional portrait of Krishna with flute, warm dawn light, flowers and subtle temple lamps, "
+        f"expression of guidance, surrender and inner steadiness for someone struggling with {topic_clean}.",
+        f"{style}. Scene 5: close-up devotional still life and hands: smartphone placed face-down beside a wooden mala and glowing diya, "
+        f"quiet five-minute pause for naam smaran after feeling overwhelmed by {topic_clean}, warm realistic light, elegant composition.",
+        f"{style}. Scene 6: peaceful Krishna blessing scene at golden dawn by a calm river, flute and peacock feather, soft flower petals, "
+        f"clear emotional resolution after {topic_clean}, spacious composition, serene ending frame.",
+    ]
+
+
+def generate_openai_story_scenes(output_root: Path, topic: str, mood: str, api_key: str) -> list[Path]:
+    if not api_key:
+        raise RuntimeError("openai_image_key_missing")
+
+    model = os.getenv("OPENAI_IMAGE_MODEL", "gpt-image-2.5-flare").strip() or "gpt-image-2.5-flare"
+    quality = os.getenv("OPENAI_IMAGE_QUALITY", "low").strip() or "low"
+    prompts = _story_image_prompts(topic, mood)
+    paths: list[Path] = []
+
+    for index, prompt in enumerate(prompts, start=1):
+        response = requests.post(
+            "https://api.openai.com/v1/images/generations",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": model,
+                "prompt": prompt,
+                "n": 1,
+                "size": "1024x1536",
+                "quality": quality,
+                "output_format": "jpeg",
+                "output_compression": 88,
+                "background": "opaque",
+            },
+            timeout=180,
+        )
+        if not response.ok:
+            raise RuntimeError(f"openai_image_{index}_{response.status_code}:{response.text[:180]}")
+        payload = response.json()
+        encoded = ((payload.get("data") or [{}])[0]).get("b64_json")
+        if not encoded:
+            raise RuntimeError(f"openai_image_{index}_missing_payload")
+        raw = base64.b64decode(encoded)
+        with Image.open(BytesIO(raw)) as image:
+            frame = _cover(image.convert("RGB"))
+            frame = ImageEnhance.Sharpness(frame).enhance(1.05)
+            path = output_root / f"story-scene-{index}.jpg"
+            frame.save(path, "JPEG", quality=93, subsampling=0, optimize=True)
+            paths.append(path)
+
+    if len(paths) != 6:
+        raise RuntimeError("openai_story_scene_count")
+    if len({hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}) != 6:
+        raise RuntimeError("openai_story_scenes_not_unique")
+    return paths
+
+
+def build_story_scenes(output_root: Path, topic: str, mood: str, api_key: str) -> tuple[list[Path], str]:
+    if os.getenv("ORIGINAL_REEL_DRY_RUN") == "1":
+        return generate_fallback_story_scenes(output_root, mood), "local_fallback"
+
+    if api_key:
+        try:
+            return generate_openai_story_scenes(output_root, topic, mood, api_key), "openai"
+        except Exception as exc:
+            print(f"AI image generation fallback: {type(exc).__name__}: {exc}", file=sys.stderr)
+
+    return generate_fallback_story_scenes(output_root, mood), "local_fallback"
 
 def fallback_script(topic: str, mood: str) -> dict:
     topic_clean = clean(topic, 90)
@@ -474,9 +565,9 @@ def synth_music(path: Path, mood: str) -> None:
         tt = i / sr
         # tanpura-like drone
         sample = (
-            0.040 * math.sin(2 * math.pi * 146.83 * tt)
-            + 0.026 * math.sin(2 * math.pi * 220.00 * tt)
-            + 0.014 * math.sin(2 * math.pi * 293.66 * tt)
+            0.032 * math.sin(2 * math.pi * 146.83 * tt)
+            + 0.020 * math.sin(2 * math.pi * 220.00 * tt)
+            + 0.011 * math.sin(2 * math.pi * 293.66 * tt)
         )
         idx = min(len(melody) - 1, int(tt / note_len))
         local = tt - idx * note_len
@@ -484,8 +575,8 @@ def synth_music(path: Path, mood: str) -> None:
         vibrato = 1.0 + 0.0028 * math.sin(2 * math.pi * 5.1 * local)
         freq = melody[idx] * vibrato
         sample += env * (
-            0.095 * math.sin(2 * math.pi * freq * local)
-            + 0.018 * math.sin(2 * math.pi * 2 * freq * local)
+            0.165 * math.sin(2 * math.pi * freq * local)
+            + 0.034 * math.sin(2 * math.pi * 2 * freq * local)
         )
         fade = min(1.0, tt / 0.7, max(0.0, (DURATION - tt) / 1.3))
         sample *= fade
@@ -548,10 +639,10 @@ def render(scenes: list[Path], ass: Path, music: Path, narration: Path | None, m
         filter_complex = ";".join(
             video_filters
             + [
-                f"[{narration_index}:a]volume=1.10,highpass=f=90[n]",
-                f"[{music_index}:a]volume=0.18[m]",
-                "[n][m]amix=inputs=2:duration=longest:dropout_transition=2,"
-                f"afade=t=out:st={DURATION - 0.8}:d=0.8[a]",
+                f"[{narration_index}:a]volume=0.92,highpass=f=90[n]",
+                f"[{music_index}:a]volume=0.48[m]",
+                "[n][m]amix=inputs=2:duration=longest:dropout_transition=2:normalize=0,"
+                f"afade=t=out:st={DURATION - 0.8}:d=0.8,alimiter=limit=0.95[a]",
             ]
         )
         run(
@@ -633,7 +724,12 @@ def main() -> int:
         send_text(token, chat_id, f"🎬 Creating your {MOODS[mood]['label'].lower()} Reel about: {topic}\n\nWriting the original Hindi script, narration and six-scene visual story…")
 
     data = generate_script(topic, mood, os.getenv("GROQ_API_KEY", "").strip())
-    scenes = generate_story_scenes(output_root, mood)
+    scenes, image_mode = build_story_scenes(
+        output_root,
+        topic,
+        mood,
+        os.getenv("OPENAI_API_KEY", "").strip(),
+    )
     ass = output_root / "reel.ass"
     music = output_root / "music.wav"
     narration = output_root / "narration.mp3"
@@ -645,9 +741,15 @@ def main() -> int:
     final = fit_telegram(output, output_root)
 
     if not skip_telegram:
+        if image_mode != "openai":
+            send_text(
+                token,
+                chat_id,
+                "🖼️ AI image generation is not configured or failed, so this Reel used the local illustrated fallback. Add OPENAI_API_KEY to enable six fresh AI-generated frames per Reel.",
+            )
         hashtags = " ".join(data["hashtags"])
         send_video(token, chat_id, final, f"✅ Original {MOODS[mood]['label']} Story Reel\n\n{data['caption']}\n\n{hashtags}")
-        send_text(token, chat_id, "🎵 Music is generated specifically for this Reel in a Krishna-flute-inspired devotional style. No downloaded commercial soundtrack was used.")
+        send_text(token, chat_id, "🎵 The Reel includes an original Krishna-flute-inspired music bed mixed clearly underneath the narration. No downloaded commercial soundtrack was used.")
     print(json.dumps({
         "ok": True,
         "mood": mood,
@@ -656,6 +758,7 @@ def main() -> int:
         "bytes": final.stat().st_size,
         "tts": has_tts,
         "story_scenes": len(scenes),
+        "image_mode": image_mode,
         "hook": data["hook"],
     }, ensure_ascii=False))
     return 0
