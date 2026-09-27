@@ -7,6 +7,7 @@ import { sendPermittedVideo, sendDocument, sendText, editText, telegramCall } fr
 import { HELP, PRIVACY, FORMATS, VARIANTS, EXAMPLES, repliedDraft, firstUrl, readAction, readDownloadAction, downloadConfirmKeyboard, formatKeyboard, sourceSummary, formatDraft } from '../src/experience.js';
 import { boundedFetch } from '../src/network.js';
 import { parseCreateReelCommand, readReelMoodAction, readReelReply, reelMoodKeyboard, reelTopicPrompt, REEL_MOODS } from '../src/original-reel.js';
+import { dailyRecommendationKeyboard, formatDailyReelRecommendation, getDailyReelRecommendation } from '../src/daily-recommendation.js';
 
 const DOWNLOAD_CONFIRMATION = 'Only continue if you own this video or have permission to download and reuse it. The worker will not use cookies or bypass private, members-only, premium, sign-in, DRM, or geo restrictions.';
 const DOWNLOAD_QUEUED = '⬇️ Download queued. The on-demand yt-dlp worker will return an MP4 here if the source is accessible and the file can be kept within Telegram’s upload limit.';
@@ -142,6 +143,18 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
           }
         }
 
+        if (command === 'today' || command === 'daily') {
+          const recommendation = getDailyReelRecommendation(new Date(now()));
+          await sendText(
+            token,
+            chatId,
+            formatDailyReelRecommendation(recommendation),
+            io,
+            { reply_markup: dailyRecommendationKeyboard(recommendation, userId, secret, now()) }
+          );
+          return success('daily_recommendation');
+        }
+
         if (command === 'start' || command === 'help') { await sendText(token, chatId, HELP, io); return success('help'); }
         if (command === 'examples') { await sendText(token, chatId, EXAMPLES, io); return success('examples'); }
         if (command === 'privacy') { await sendText(token, chatId, PRIVACY, io); return success('privacy'); }
@@ -188,7 +201,7 @@ export function createHandler({ env = process.env, fetchImpl = fetch, metadataFn
           if (!instructions || instructions.length > 500) { await sendText(token, chatId, 'Add 1–500 characters of editing instructions after /rewrite, for example: Make it friendlier and finish with a question.', io); return success('invalid_instructions'); }
           previousDraft = draft.text; format = draft.format; videoId = extractYouTubeId(draft.source);
         }
-        if (command && !['analyze', 'rewrite', 'create_reel', ...Object.keys(VARIANTS), ...Object.keys(FORMATS)].includes(command)) {
+        if (command && !['analyze', 'rewrite', 'create_reel', 'today', 'daily', ...Object.keys(VARIANTS), ...Object.keys(FORMATS)].includes(command)) {
           await sendText(token, chatId, 'I do not recognise that command. Paste a YouTube link to choose a format, paste an Instagram Reel to download it, or use /help.', io);
           return success('unknown_command');
         }
