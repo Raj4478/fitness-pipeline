@@ -113,21 +113,27 @@ jobs:
           sys.path.insert(0, str(scripts))
           import create_original_reel as reel
 
-          source = Image.new("RGB", (1024, 1536), (45, 75, 120))
-          buf = io.BytesIO()
-          source.save(buf, format="JPEG", quality=90)
-          encoded = base64.b64encode(buf.getvalue()).decode("ascii")
-
           calls = []
           class FakeResponse:
               ok = True
               status_code = 200
               text = ""
+              def __init__(self, encoded):
+                  self.encoded = encoded
               def json(self):
-                  return {"data": [{"b64_json": encoded}]}
+                  return {"data": [{"b64_json": self.encoded}]}
+
+          def fake_post(*args, **kwargs):
+              calls.append(kwargs.get("json", {}))
+              index = len(calls)
+              source = Image.new("RGB", (1024, 1536), (35 + index * 20, 65 + index * 14, 100 + index * 11))
+              buf = io.BytesIO()
+              source.save(buf, format="JPEG", quality=90)
+              encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+              return FakeResponse(encoded)
 
           original_post = reel.requests.post
-          reel.requests.post = lambda *args, **kwargs: (calls.append(kwargs.get("json", {})) or FakeResponse())
+          reel.requests.post = fake_post
           try:
               with tempfile.TemporaryDirectory(prefix="ai-story-scenes-") as temp:
                   scenes = reel.generate_openai_story_scenes(Path(temp), "overthinking at night", "peaceful", "fake-key")
