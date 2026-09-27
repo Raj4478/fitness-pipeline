@@ -87,7 +87,7 @@ jobs:
           import create_original_reel as reel
 
           with tempfile.TemporaryDirectory(prefix="story-scenes-") as temp:
-              scenes = reel.generate_story_scenes(Path(temp), "peaceful")
+              scenes = reel.generate_fallback_story_scenes(Path(temp), "peaceful")
               assert len(scenes) == 6, scenes
               hashes = []
               for scene in scenes:
@@ -98,6 +98,48 @@ jobs:
                   hashes.append(hashlib.sha256(scene.read_bytes()).hexdigest())
               assert len(set(hashes)) == 6, hashes
               print("Six generated story scenes verified:", ", ".join(path.name for path in scenes))
+          PY
+      - name: Verify AI story image generation adapter
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          import io
+          import sys
+          import tempfile
+          from PIL import Image
+
+          scripts = Path("youtube-telegram-bot/scripts").resolve()
+          sys.path.insert(0, str(scripts))
+          import create_original_reel as reel
+
+          source = Image.new("RGB", (1024, 1536), (45, 75, 120))
+          buf = io.BytesIO()
+          source.save(buf, format="JPEG", quality=90)
+          encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+
+          calls = []
+          class FakeResponse:
+              ok = True
+              status_code = 200
+              text = ""
+              def json(self):
+                  return {"data": [{"b64_json": encoded}]}
+
+          original_post = reel.requests.post
+          reel.requests.post = lambda *args, **kwargs: (calls.append(kwargs.get("json", {})) or FakeResponse())
+          try:
+              with tempfile.TemporaryDirectory(prefix="ai-story-scenes-") as temp:
+                  scenes = reel.generate_openai_story_scenes(Path(temp), "overthinking at night", "peaceful", "fake-key")
+                  assert len(scenes) == 6
+                  assert len(calls) == 6
+                  for scene in scenes:
+                      with Image.open(scene) as image:
+                          assert image.size == (1080, 1920), image.size
+                          assert image.format == "JPEG", image.format
+          finally:
+              reel.requests.post = original_post
+          print("AI story image adapter verified:", len(calls), "generation calls")
           PY
       - name: Verify editorial API failure fallback
         run: |
@@ -198,6 +240,7 @@ jobs:
           result="$(python youtube-telegram-bot/scripts/create_original_reel.py)"
           echo "$result"
           echo "$result" | grep -q '"story_scenes": 6'
+          echo "$result" | grep -q '"image_mode": "local_fallback"'
           test -s "${ORIGINAL_REEL_OUTPUT_DIR}/original-devotional-reel.mp4"
           dims="$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x "${ORIGINAL_REEL_OUTPUT_DIR}/original-devotional-reel.mp4")"
           test "$dims" = "1080x1920"
@@ -206,4 +249,16 @@ jobs:
           duration = float("$duration")
           assert 18.8 <= duration <= 19.6, duration
           print("Original mood Reel render verified:", duration, "seconds", "$dims")
+          PY
+          python - <<'PY'
+          from pathlib import Path
+          import audioop
+          import wave
+
+          music = Path("${ORIGINAL_REEL_OUTPUT_DIR}") / "music.wav"
+          with wave.open(str(music), "rb") as wf:
+              frames = wf.readframes(wf.getnframes())
+              rms = audioop.rms(frames, wf.getsampwidth()) / 32768.0
+          assert rms > 0.025, rms
+          print("Flute music RMS verified:", round(rms, 4))
           PY
