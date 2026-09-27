@@ -1,0 +1,81 @@
+name: Cloudflare Full Reel E2E
+
+on:
+  push:
+    branches:
+      - test/cloudflare-full-reel-v013
+    paths:
+      - '.github/workflows/cloudflare_full_reel_e2e.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      ORIGINAL_REEL_MOOD: peaceful
+      ORIGINAL_REEL_TOPIC: overthinking at night
+      ORIGINAL_REEL_SKIP_TELEGRAM: '1'
+      ORIGINAL_REEL_OUTPUT_DIR: ${{ runner.temp }}/cloudflare-full-reel
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GROQ_REEL_MODEL: 'openai/gpt-oss-20b'
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_IMAGE_MODEL_PREMIUM: '@cf/black-forest-labs/flux-2-klein-9b'
+      CLOUDFLARE_IMAGE_MODEL_FAST: '@cf/black-forest-labs/flux-2-klein-4b'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-noto-core
+          python -m pip install --disable-pip-version-check -q requests pillow
+      - name: Generate real five-image Reel
+        run: |
+          python youtube-telegram-bot/scripts/create_original_reel.py | tee result.json
+          grep -q '"story_scenes": 5' result.json
+          grep -Eq '"image_mode": "cloudflare_(hybrid_9b_4b|4b)"' result.json
+          grep -q '"voice": false' result.json
+      - name: Inspect generated frames
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import os
+          from PIL import Image, ImageFilter, ImageStat
+
+          root = Path(os.environ["ORIGINAL_REEL_OUTPUT_DIR"])
+          scenes = sorted(root.glob("story-scene-*.jpg"))
+          assert len(scenes) == 5, scenes
+          hashes = set()
+          for scene in scenes:
+              raw = scene.read_bytes()
+              hashes.add(hashlib.sha256(raw).hexdigest())
+              with Image.open(scene) as image:
+                  assert image.size == (1080, 1920), (scene.name, image.size)
+                  gray = image.convert("L")
+                  edges = gray.filter(ImageFilter.FIND_EDGES)
+                  edge_mean = ImageStat.Stat(edges).mean[0]
+                  print(scene.name, "bytes=", len(raw), "edge_mean=", round(edge_mean, 2))
+                  assert len(raw) > 100_000, (scene.name, len(raw))
+                  assert edge_mean > 3.0, (scene.name, edge_mean)
+          assert len(hashes) == 5, hashes
+          video = root / "original-devotional-reel.mp4"
+          assert video.exists() and video.stat().st_size > 500_000, video
+          print("Full real Cloudflare Reel verified:", video.stat().st_size, "bytes")
+          PY
+      - name: Upload visual QA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-full-reel-v013
+          path: |
+            ${{ runner.temp }}/cloudflare-full-reel/story-scene-*.jpg
+            ${{ runner.temp }}/cloudflare-full-reel/original-devotional-reel.mp4
+            result.json
+          if-no-files-found: error
+          retention-days: 2
