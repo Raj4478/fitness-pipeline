@@ -9,12 +9,14 @@ on:
       - 'youtube-telegram-bot/**'
       - '.github/workflows/youtube_download_worker.yml'
       - '.github/workflows/original_reel_worker.yml'
+      - '.github/workflows/daily_reel_recommendation.yml'
       - '.github/workflows/telegram_media_ci.yml'
   pull_request:
     paths:
       - 'youtube-telegram-bot/**'
       - '.github/workflows/youtube_download_worker.yml'
       - '.github/workflows/original_reel_worker.yml'
+      - '.github/workflows/daily_reel_recommendation.yml'
       - '.github/workflows/telegram_media_ci.yml'
 
 permissions:
@@ -37,6 +39,7 @@ jobs:
         run: npm test
       - name: Validate media worker sources
         run: |
+          node --check youtube-telegram-bot/scripts/send-daily-recommendation.mjs
           python -m py_compile youtube-telegram-bot/scripts/download_youtube.py
           python -m py_compile youtube-telegram-bot/scripts/transform_reel.py
           python -m py_compile youtube-telegram-bot/scripts/create_original_reel.py
