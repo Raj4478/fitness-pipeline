@@ -24,6 +24,21 @@ jobs:
           test -n "$CLOUDFLARE_API_TOKEN"
           echo "Cloudflare credentials are present"
 
+      - name: Verify Cloudflare API token status
+        run: |
+          verify_code="$(curl -sS -o token.json -w '%{http_code}' \
+            "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+            --header "Authorization: Bearer ${CLOUDFLARE_API_TOKEN}")"
+          echo "Token verify HTTP status: $verify_code"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          payload = json.loads(Path("token.json").read_text())
+          print("Token success:", payload.get("success"))
+          print("Token status:", (payload.get("result") or {}).get("status"))
+          print("Errors:", payload.get("errors") or [])
+          PY
+
       - name: Generate test image with Workers AI
         run: |
           http_code="$(curl -sS -o response.json -w '%{http_code}' \
