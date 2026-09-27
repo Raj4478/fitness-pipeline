@@ -17,6 +17,7 @@ from array import array
 from pathlib import Path
 
 import requests
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
@@ -24,14 +25,6 @@ DURATION = 19.2
 WIDTH = 1080
 HEIGHT = 1920
 SCENE_DURATIONS = (2.8, 3.0, 3.0, 3.3, 3.8, 3.3)
-STORY_SCENES = (
-    ASSETS / "story-scenes" / "scene1.jpg",
-    ASSETS / "story-scenes" / "scene2.jpg",
-    ASSETS / "story-scenes" / "scene3.jpg",
-    ASSETS / "story-scenes" / "scene4.jpg",
-    ASSETS / "story-scenes" / "scene5.avif",
-    ASSETS / "story-scenes" / "scene6.avif",
-)
 MAX_TELEGRAM_BYTES = 49 * 1024 * 1024
 KRISHNA_SHA256 = "2e4b59b4afb465314e510707faa0e96de46641cbb67b4b12990ffb3c4eb66c73"
 MOODS = {
@@ -83,13 +76,202 @@ def wrap_words(value: str, width: int = 26) -> str:
     return r"\N".join(lines[:3])
 
 
-def get_story_scenes() -> list[Path]:
-    missing = [str(path) for path in STORY_SCENES if not path.is_file()]
-    if missing:
-        raise RuntimeError("story_scene_assets_missing:" + ",".join(missing))
-    if len(STORY_SCENES) != len(SCENE_DURATIONS):
-        raise RuntimeError("story_scene_duration_mismatch")
-    return list(STORY_SCENES)
+def materialize_krishna(path: Path) -> Path:
+    encoded = "".join(part.read_text(encoding="ascii").strip() for part in ASSET_PARTS)
+    payload = base64.b64decode(encoded, validate=True)
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != KRISHNA_SHA256:
+        raise RuntimeError(f"krishna_asset_hash_mismatch:{digest}")
+    path.write_bytes(payload)
+    return path
+
+
+def _gradient(size: tuple[int, int], top: tuple[int, int, int], bottom: tuple[int, int, int]) -> Image.Image:
+    width, height = size
+    image = Image.new("RGB", size)
+    draw = ImageDraw.Draw(image)
+    for y in range(height):
+        t = y / max(1, height - 1)
+        color = tuple(int(a + (b - a) * t) for a, b in zip(top, bottom))
+        draw.line((0, y, width, y), fill=color)
+    return image
+
+
+def _cover(image: Image.Image, zoom: float = 1.0, x_bias: float = 0.0, y_bias: float = 0.0) -> Image.Image:
+    image = image.convert("RGB")
+    scale = max(WIDTH / image.width, HEIGHT / image.height) * zoom
+    resized = image.resize(
+        (max(WIDTH, int(image.width * scale)), max(HEIGHT, int(image.height * scale))),
+        Image.Resampling.LANCZOS,
+    )
+    overflow_x = max(0, resized.width - WIDTH)
+    overflow_y = max(0, resized.height - HEIGHT)
+    left = int(overflow_x * max(0.0, min(1.0, 0.5 + x_bias * 0.5)))
+    top = int(overflow_y * max(0.0, min(1.0, 0.5 + y_bias * 0.5)))
+    return resized.crop((left, top, left + WIDTH, top + HEIGHT))
+
+
+def _glow(base: Image.Image, center: tuple[int, int], radius: int, color: tuple[int, int, int], alpha: int) -> Image.Image:
+    layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    cx, cy = center
+    for r in range(radius, 0, -24):
+        strength = int(alpha * (1.0 - r / radius) ** 0.6)
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(*color, strength))
+    layer = layer.filter(ImageFilter.GaussianBlur(max(12, radius // 10)))
+    return Image.alpha_composite(base.convert("RGBA"), layer).convert("RGB")
+
+
+def _krishna_scene(source: Image.Image, *, zoom: float, x_bias: float, y_bias: float, tint: tuple[int, int, int], tint_alpha: int, glow_center: tuple[int, int]) -> Image.Image:
+    frame = _cover(source, zoom=zoom, x_bias=x_bias, y_bias=y_bias)
+    frame = ImageEnhance.Contrast(frame).enhance(1.04)
+    frame = ImageEnhance.Sharpness(frame).enhance(1.08)
+    tint_layer = Image.new("RGBA", frame.size, (*tint, tint_alpha))
+    frame = Image.alpha_composite(frame.convert("RGBA"), tint_layer).convert("RGB")
+    return _glow(frame, glow_center, 470, (255, 205, 104), 86)
+
+
+def _scene_restless_night() -> Image.Image:
+    image = _gradient((WIDTH, HEIGHT), (8, 17, 39), (19, 29, 49))
+    image = _glow(image, (820, 330), 360, (91, 142, 216), 72)
+    draw = ImageDraw.Draw(image)
+
+    # Window + moon.
+    draw.rounded_rectangle((655, 135, 990, 690), radius=34, fill=(14, 29, 56), outline=(86, 112, 158), width=5)
+    draw.line((820, 140, 820, 688), fill=(66, 91, 133), width=5)
+    draw.line((660, 414, 986, 414), fill=(66, 91, 133), width=5)
+    draw.ellipse((750, 205, 880, 335), fill=(238, 238, 218))
+
+    # Bed and pillow.
+    draw.rounded_rectangle((0, 1160, 1080, 1919), radius=70, fill=(19, 26, 43))
+    draw.rounded_rectangle((72, 1120, 480, 1385), radius=85, fill=(43, 51, 69))
+    draw.rectangle((0, 1435, 1080, 1920), fill=(26, 31, 46))
+
+    # Restless seated silhouette.
+    draw.ellipse((300, 700, 520, 920), fill=(7, 10, 17))
+    draw.polygon([(330, 900), (520, 900), (650, 1435), (200, 1435)], fill=(7, 10, 17))
+    draw.line((490, 920, 640, 790), fill=(7, 10, 17), width=64)
+    draw.ellipse((600, 720, 670, 790), fill=(7, 10, 17))
+
+    # Small phone glow on bedside table.
+    image = _glow(image, (830, 1325), 210, (78, 142, 229), 55)
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((785, 1230, 875, 1410), radius=18, fill=(25, 30, 42), outline=(104, 145, 206), width=4)
+    return image
+
+
+def _scene_reflection_sunrise() -> Image.Image:
+    image = _gradient((WIDTH, HEIGHT), (33, 48, 88), (245, 168, 94))
+    image = _glow(image, (800, 710), 420, (255, 198, 96), 105)
+    draw = ImageDraw.Draw(image)
+
+    # Sun, river and distant temple skyline.
+    draw.ellipse((725, 560, 875, 710), fill=(255, 225, 155))
+    draw.rectangle((0, 1010, WIDTH, HEIGHT), fill=(72, 92, 110))
+    for y in range(1030, 1640, 75):
+        draw.line((0, y, WIDTH, y + 18), fill=(107, 128, 139), width=3)
+    draw.rectangle((105, 760, 260, 1015), fill=(31, 39, 55))
+    draw.polygon([(75, 760), (182, 620), (290, 760)], fill=(31, 39, 55))
+    draw.rectangle((880, 790, 1015, 1015), fill=(35, 42, 55))
+    draw.polygon([(850, 790), (948, 660), (1045, 790)], fill=(35, 42, 55))
+
+    # Ghat steps.
+    for index in range(6):
+        y = 1380 + index * 90
+        draw.rectangle((0, y, WIDTH, y + 54), fill=(72 + index * 5, 65 + index * 4, 60 + index * 3))
+
+    # Seated reflective silhouette.
+    draw.ellipse((390, 920, 545, 1075), fill=(19, 24, 34))
+    draw.polygon([(420, 1050), (550, 1050), (655, 1415), (300, 1415)], fill=(19, 24, 34))
+    draw.line((425, 1200, 280, 1370), fill=(19, 24, 34), width=62)
+    draw.line((535, 1200, 700, 1370), fill=(19, 24, 34), width=62)
+
+    # Birds.
+    draw.arc((160, 400, 235, 445), 200, 340, fill=(35, 42, 60), width=4)
+    draw.arc((225, 390, 305, 445), 200, 340, fill=(35, 42, 60), width=4)
+    return image
+
+
+def _scene_phone_down() -> Image.Image:
+    image = _gradient((WIDTH, HEIGHT), (92, 49, 29), (24, 26, 32))
+    image = _glow(image, (775, 610), 430, (255, 174, 66), 120)
+    draw = ImageDraw.Draw(image)
+
+    # Warm tabletop.
+    draw.rectangle((0, 1050, WIDTH, HEIGHT), fill=(83, 50, 35))
+
+    # Diya and flame.
+    draw.ellipse((690, 1000, 930, 1140), fill=(157, 85, 29))
+    draw.polygon([(810, 1010), (755, 910), (815, 800), (865, 920)], fill=(255, 199, 74))
+    draw.polygon([(812, 980), (785, 925), (815, 865), (842, 930)], fill=(255, 242, 178))
+
+    # Phone face-down.
+    draw.rounded_rectangle((165, 1190, 525, 1750), radius=48, fill=(30, 32, 38), outline=(111, 93, 80), width=6)
+    draw.ellipse((315, 1240, 375, 1300), fill=(56, 60, 68))
+
+    # Mala: curved string + beads.
+    draw.arc((505, 1140, 1035, 1810), 62, 300, fill=(214, 168, 103), width=7)
+    for angle in range(70, 295, 16):
+        rad = math.radians(angle)
+        cx = 770 + int(255 * math.cos(rad))
+        cy = 1470 + int(315 * math.sin(rad))
+        draw.ellipse((cx - 15, cy - 15, cx + 15, cy + 15), fill=(222, 174, 104))
+    draw.ellipse((735, 1760, 790, 1815), fill=(222, 174, 104))
+    draw.line((762, 1810, 762, 1900), fill=(208, 150, 74), width=8)
+    return image
+
+
+def generate_story_scenes(output_root: Path, mood: str) -> list[Path]:
+    output_root.mkdir(parents=True, exist_ok=True)
+    krishna_path = materialize_krishna(output_root / "krishna-source.jpg")
+    krishna = Image.open(krishna_path).convert("RGB")
+
+    scenes = [
+        _scene_restless_night(),
+        _krishna_scene(
+            krishna,
+            zoom=1.08,
+            x_bias=0.08,
+            y_bias=-0.10,
+            tint=(8, 32, 76),
+            tint_alpha=54,
+            glow_center=(720, 560),
+        ),
+        _scene_reflection_sunrise(),
+        _krishna_scene(
+            krishna,
+            zoom=1.18,
+            x_bias=-0.08,
+            y_bias=-0.16,
+            tint=(139, 75, 18),
+            tint_alpha=36,
+            glow_center=(660, 620),
+        ),
+        _scene_phone_down(),
+        _krishna_scene(
+            krishna,
+            zoom=1.26,
+            x_bias=0.0,
+            y_bias=-0.20,
+            tint=(164, 98, 18),
+            tint_alpha=45,
+            glow_center=(540, 520),
+        ),
+    ]
+
+    # Mood-level grading is deliberately subtle; no blur filler or fake camera effects.
+    cfg = MOODS[mood]
+    paths: list[Path] = []
+    for index, scene in enumerate(scenes, start=1):
+        graded = ImageEnhance.Color(scene).enhance(max(0.75, min(1.20, cfg["saturation"])))
+        graded = ImageEnhance.Brightness(graded).enhance(max(0.90, min(1.08, 1.0 + cfg["brightness"])))
+        path = output_root / f"story-scene-{index}.jpg"
+        graded.save(path, "JPEG", quality=91, subsampling=0, optimize=True)
+        paths.append(path)
+
+    if len({hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}) != 6:
+        raise RuntimeError("story_scene_assets_not_unique")
+    return paths
 
 def fallback_script(topic: str, mood: str) -> dict:
     topic_clean = clean(topic, 90)
@@ -451,7 +633,7 @@ def main() -> int:
         send_text(token, chat_id, f"🎬 Creating your {MOODS[mood]['label'].lower()} Reel about: {topic}\n\nWriting the original Hindi script, narration and six-scene visual story…")
 
     data = generate_script(topic, mood, os.getenv("GROQ_API_KEY", "").strip())
-    scenes = get_story_scenes()
+    scenes = generate_story_scenes(output_root, mood)
     ass = output_root / "reel.ass"
     music = output_root / "music.wav"
     narration = output_root / "narration.mp3"
