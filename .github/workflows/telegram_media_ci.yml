@@ -259,9 +259,10 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import audioop
+          import os
           import wave
 
-          music = Path("${ORIGINAL_REEL_OUTPUT_DIR}") / "music.wav"
+          music = Path(os.environ["ORIGINAL_REEL_OUTPUT_DIR"]) / "music.wav"
           with wave.open(str(music), "rb") as wf:
               frames = wf.readframes(wf.getnframes())
               rms = audioop.rms(frames, wf.getsampwidth()) / 32768.0
