@@ -17,6 +17,7 @@ from array import array
 from pathlib import Path
 
 import requests
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSETS = ROOT / "assets"
@@ -78,11 +79,199 @@ def wrap_words(value: str, width: int = 26) -> str:
 def materialize_krishna(path: Path) -> Path:
     encoded = "".join(part.read_text(encoding="ascii").strip() for part in ASSET_PARTS)
     payload = base64.b64decode(encoded, validate=True)
-    if hashlib.sha256(payload).hexdigest() != KRISHNA_SHA256:
-        raise RuntimeError("krishna_asset_checksum_failed")
+    digest = hashlib.sha256(payload).hexdigest()
+    if digest != KRISHNA_SHA256:
+        raise RuntimeError(f"krishna_asset_hash_mismatch:{digest}")
     path.write_bytes(payload)
     return path
 
+
+def _gradient(size: tuple[int, int], top: tuple[int, int, int], bottom: tuple[int, int, int]) -> Image.Image:
+    width, height = size
+    image = Image.new("RGB", size)
+    draw = ImageDraw.Draw(image)
+    for y in range(height):
+        t = y / max(1, height - 1)
+        color = tuple(int(a + (b - a) * t) for a, b in zip(top, bottom))
+        draw.line((0, y, width, y), fill=color)
+    return image
+
+
+def _cover(image: Image.Image, zoom: float = 1.0, x_bias: float = 0.0, y_bias: float = 0.0) -> Image.Image:
+    image = image.convert("RGB")
+    scale = max(WIDTH / image.width, HEIGHT / image.height) * zoom
+    resized = image.resize(
+        (max(WIDTH, int(image.width * scale)), max(HEIGHT, int(image.height * scale))),
+        Image.Resampling.LANCZOS,
+    )
+    overflow_x = max(0, resized.width - WIDTH)
+    overflow_y = max(0, resized.height - HEIGHT)
+    left = int(overflow_x * max(0.0, min(1.0, 0.5 + x_bias * 0.5)))
+    top = int(overflow_y * max(0.0, min(1.0, 0.5 + y_bias * 0.5)))
+    return resized.crop((left, top, left + WIDTH, top + HEIGHT))
+
+
+def _glow(base: Image.Image, center: tuple[int, int], radius: int, color: tuple[int, int, int], alpha: int) -> Image.Image:
+    layer = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    cx, cy = center
+    for r in range(radius, 0, -24):
+        strength = int(alpha * (1.0 - r / radius) ** 0.6)
+        draw.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(*color, strength))
+    layer = layer.filter(ImageFilter.GaussianBlur(max(12, radius // 10)))
+    return Image.alpha_composite(base.convert("RGBA"), layer).convert("RGB")
+
+
+def _krishna_scene(source: Image.Image, *, zoom: float, x_bias: float, y_bias: float, tint: tuple[int, int, int], tint_alpha: int, glow_center: tuple[int, int]) -> Image.Image:
+    frame = _cover(source, zoom=zoom, x_bias=x_bias, y_bias=y_bias)
+    frame = ImageEnhance.Contrast(frame).enhance(1.04)
+    frame = ImageEnhance.Sharpness(frame).enhance(1.08)
+    tint_layer = Image.new("RGBA", frame.size, (*tint, tint_alpha))
+    frame = Image.alpha_composite(frame.convert("RGBA"), tint_layer).convert("RGB")
+    return _glow(frame, glow_center, 470, (255, 205, 104), 86)
+
+
+def _scene_restless_night() -> Image.Image:
+    image = _gradient((WIDTH, HEIGHT), (8, 17, 39), (19, 29, 49))
+    image = _glow(image, (820, 330), 360, (91, 142, 216), 72)
+    draw = ImageDraw.Draw(image)
+
+    # Window + moon.
+    draw.rounded_rectangle((655, 135, 990, 690), radius=34, fill=(14, 29, 56), outline=(86, 112, 158), width=5)
+    draw.line((820, 140, 820, 688), fill=(66, 91, 133), width=5)
+    draw.line((660, 414, 986, 414), fill=(66, 91, 133), width=5)
+    draw.ellipse((750, 205, 880, 335), fill=(238, 238, 218))
+
+    # Bed and pillow.
+    draw.rounded_rectangle((0, 1160, 1080, 1919), radius=70, fill=(19, 26, 43))
+    draw.rounded_rectangle((72, 1120, 480, 1385), radius=85, fill=(43, 51, 69))
+    draw.rectangle((0, 1435, 1080, 1920), fill=(26, 31, 46))
+
+    # Restless seated silhouette.
+    draw.ellipse((300, 700, 520, 920), fill=(7, 10, 17))
+    draw.polygon([(330, 900), (520, 900), (650, 1435), (200, 1435)], fill=(7, 10, 17))
+    draw.line((490, 920, 640, 790), fill=(7, 10, 17), width=64)
+    draw.ellipse((600, 720, 670, 790), fill=(7, 10, 17))
+
+    # Small phone glow on bedside table.
+    image = _glow(image, (830, 1325), 210, (78, 142, 229), 55)
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((785, 1230, 875, 1410), radius=18, fill=(25, 30, 42), outline=(104, 145, 206), width=4)
+    return image
+
+
+def _scene_reflection_sunrise() -> Image.Image:
+    image = _gradient((WIDTH, HEIGHT), (33, 48, 88), (245, 168, 94))
+    image = _glow(image, (800, 710), 420, (255, 198, 96), 105)
+    draw = ImageDraw.Draw(image)
+
+    # Sun, river and distant temple skyline.
+    draw.ellipse((725, 560, 875, 710), fill=(255, 225, 155))
+    draw.rectangle((0, 1010, WIDTH, HEIGHT), fill=(72, 92, 110))
+    for y in range(1030, 1640, 75):
+        draw.line((0, y, WIDTH, y + 18), fill=(107, 128, 139), width=3)
+    draw.rectangle((105, 760, 260, 1015), fill=(31, 39, 55))
+    draw.polygon([(75, 760), (182, 620), (290, 760)], fill=(31, 39, 55))
+    draw.rectangle((880, 790, 1015, 1015), fill=(35, 42, 55))
+    draw.polygon([(850, 790), (948, 660), (1045, 790)], fill=(35, 42, 55))
+
+    # Ghat steps.
+    for index in range(6):
+        y = 1380 + index * 90
+        draw.rectangle((0, y, WIDTH, y + 54), fill=(72 + index * 5, 65 + index * 4, 60 + index * 3))
+
+    # Seated reflective silhouette.
+    draw.ellipse((390, 920, 545, 1075), fill=(19, 24, 34))
+    draw.polygon([(420, 1050), (550, 1050), (655, 1415), (300, 1415)], fill=(19, 24, 34))
+    draw.line((425, 1200, 280, 1370), fill=(19, 24, 34), width=62)
+    draw.line((535, 1200, 700, 1370), fill=(19, 24, 34), width=62)
+
+    # Birds.
+    draw.arc((160, 400, 235, 445), 200, 340, fill=(35, 42, 60), width=4)
+    draw.arc((225, 390, 305, 445), 200, 340, fill=(35, 42, 60), width=4)
+    return image
+
+
+def _scene_phone_down() -> Image.Image:
+    image = _gradient((WIDTH, HEIGHT), (92, 49, 29), (24, 26, 32))
+    image = _glow(image, (775, 610), 430, (255, 174, 66), 120)
+    draw = ImageDraw.Draw(image)
+
+    # Warm tabletop.
+    draw.rectangle((0, 1050, WIDTH, HEIGHT), fill=(83, 50, 35))
+
+    # Diya and flame.
+    draw.ellipse((690, 1000, 930, 1140), fill=(157, 85, 29))
+    draw.polygon([(810, 1010), (755, 910), (815, 800), (865, 920)], fill=(255, 199, 74))
+    draw.polygon([(812, 980), (785, 925), (815, 865), (842, 930)], fill=(255, 242, 178))
+
+    # Phone face-down.
+    draw.rounded_rectangle((165, 1190, 525, 1750), radius=48, fill=(30, 32, 38), outline=(111, 93, 80), width=6)
+    draw.ellipse((315, 1240, 375, 1300), fill=(56, 60, 68))
+
+    # Mala: curved string + beads.
+    draw.arc((505, 1140, 1035, 1810), 62, 300, fill=(214, 168, 103), width=7)
+    for angle in range(70, 295, 16):
+        rad = math.radians(angle)
+        cx = 770 + int(255 * math.cos(rad))
+        cy = 1470 + int(315 * math.sin(rad))
+        draw.ellipse((cx - 15, cy - 15, cx + 15, cy + 15), fill=(222, 174, 104))
+    draw.ellipse((735, 1760, 790, 1815), fill=(222, 174, 104))
+    draw.line((762, 1810, 762, 1900), fill=(208, 150, 74), width=8)
+    return image
+
+
+def generate_story_scenes(output_root: Path, mood: str) -> list[Path]:
+    output_root.mkdir(parents=True, exist_ok=True)
+    krishna_path = materialize_krishna(output_root / "krishna-source.jpg")
+    krishna = Image.open(krishna_path).convert("RGB")
+
+    scenes = [
+        _scene_restless_night(),
+        _krishna_scene(
+            krishna,
+            zoom=1.08,
+            x_bias=0.08,
+            y_bias=-0.10,
+            tint=(8, 32, 76),
+            tint_alpha=54,
+            glow_center=(720, 560),
+        ),
+        _scene_reflection_sunrise(),
+        _krishna_scene(
+            krishna,
+            zoom=1.18,
+            x_bias=-0.08,
+            y_bias=-0.16,
+            tint=(139, 75, 18),
+            tint_alpha=36,
+            glow_center=(660, 620),
+        ),
+        _scene_phone_down(),
+        _krishna_scene(
+            krishna,
+            zoom=1.26,
+            x_bias=0.0,
+            y_bias=-0.20,
+            tint=(164, 98, 18),
+            tint_alpha=45,
+            glow_center=(540, 520),
+        ),
+    ]
+
+    # Mood-level grading is deliberately subtle; no blur filler or fake camera effects.
+    cfg = MOODS[mood]
+    paths: list[Path] = []
+    for index, scene in enumerate(scenes, start=1):
+        graded = ImageEnhance.Color(scene).enhance(max(0.75, min(1.20, cfg["saturation"])))
+        graded = ImageEnhance.Brightness(graded).enhance(max(0.90, min(1.08, 1.0 + cfg["brightness"])))
+        path = output_root / f"story-scene-{index}.jpg"
+        graded.save(path, "JPEG", quality=91, subsampling=0, optimize=True)
+        paths.append(path)
+
+    if len({hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}) != 6:
+        raise RuntimeError("story_scene_assets_not_unique")
+    return paths
 
 def fallback_script(topic: str, mood: str) -> dict:
     topic_clean = clean(topic, 90)
@@ -96,12 +285,12 @@ def fallback_script(topic: str, mood: str) -> dict:
     }
     return {
         "hook": hooks[mood],
-        "line1": "मन को बदलने की शुरुआत अक्सर परिस्थिति से नहीं, अपनी प्रतिक्रिया को देखने से होती है।",
-        "line2": "कुछ क्षण रुककर साँस और नाम स्मरण पर ध्यान दें, फिर अगला छोटा सही कदम चुनें।",
-        "line3": "हर विचार को तुरंत सच मानना जरूरी नहीं; मन को दिशा देना भी एक अभ्यास है।",
-        "takeaway": "आज पाँच मिनट फोन अलग रखकर शांत होकर नाम स्मरण करें।",
+        "line1": "हम सोचते हैं कि ज्यादा सोचने से शायद कोई समाधान मिल जाएगा।",
+        "line2": "लेकिन कई बार हम बस उसी चिंता को बार-बार दोहराते रहते हैं।",
+        "line3": "मन को रोकना नहीं; उसे शांत और सही दिशा देना सीखना पड़ता है।",
+        "takeaway": "आज पाँच मिनट फोन दूर रखें, शांत बैठें और नाम स्मरण करें।",
         "closing": "हर विचार का जवाब देना जरूरी नहीं।",
-        "narration": "जब मन किसी बात में उलझ जाए, हर विचार के पीछे भागना जरूरी नहीं। पाँच मिनट रुकिए, फोन अलग रखिए, साँस सामान्य होने दीजिए और नाम स्मरण कीजिए। फिर केवल अगला छोटा सही कदम चुनिए।",
+        "narration": "जब मन किसी बात में उलझ जाए, हम अक्सर उसी विचार को बार-बार दोहराते हैं। मन को रोकना नहीं, दिशा देना सीखिए। आज पाँच मिनट फोन दूर रखकर शांत बैठें और नाम स्मरण करें। हर विचार का जवाब देना जरूरी नहीं।",
         "caption": f"{topic_clean} पर आज की छोटी-सी devotional reflection. पाँच मिनट शांति, स्मरण और एक छोटा सही कदम। 🙏",
         "hashtags": ["#RadheRadhe", "#Bhakti", "#मनकीशांति"],
     }
@@ -143,11 +332,23 @@ Mood: {mood_desc}
 This is NOT a quote from Premanand Ji or any other teacher. Do not attribute statements to a real person.
 Use natural Hindi in Devanagari. Keep it respectful and useful.
 
+The Reel uses SIX different full-screen story images in this exact visual arc:
+1) a restless person awake at night,
+2) Krishna appearing as a calm devotional presence,
+3) the person reflecting alone at sunrise,
+4) Krishna offering reassurance/guidance,
+5) the person putting the phone aside for a simple devotional practice,
+6) a peaceful Krishna blessing/resolution.
+
+Write the six text beats so they feel like one continuous micro-story rather than six unrelated quotes.
+
 Return exactly these fields:
 hook: 5-11 words, specific question/problem, strong from frame 1, no vague clickbait.
-line1, line2, line3: 10-22 Hindi words each, each must add a different useful thought.
-takeaway: 8-16 words, concrete action the viewer can try today.
-closing: 5-12 Hindi words, memorable and shareable, emotionally resonant, no engagement bait.
+line1: 8-18 Hindi words; recognition of the viewer's thought pattern, naturally continuing the hook.
+line2: 8-18 Hindi words; the realization/turn in the story, not a repetition of line1.
+line3: 8-18 Hindi words; spiritual redirection or grounded guidance that resolves the tension.
+takeaway: 8-16 words; a concrete phone-down / pause / naam-smaran action the viewer can try today.
+closing: 5-12 Hindi words; a calm memorable resolution, emotionally resonant, no engagement bait.
 narration: 32-42 Hindi words, smooth spoken script that fits a 19-second Reel and matches the on-screen ideas.
 caption: <=170 characters.
 hashtags: exactly 3; include #RadheRadhe or #Bhakti; no #viral/#trending.
@@ -309,47 +510,76 @@ async def make_tts(text: str, output: Path) -> bool:
         return False
 
 
-def render(background: Path, ass: Path, music: Path, narration: Path | None, mood: str, output: Path) -> None:
-    """Render the approved stable style: no zoompan, no shake, no blur filler, no crossfades."""
+def render(scenes: list[Path], ass: Path, music: Path, narration: Path | None, mood: str, output: Path) -> None:
+    """Render six stable full-screen story frames with hard cuts and no camera shake."""
+    if len(scenes) != len(SCENE_DURATIONS):
+        raise RuntimeError("story_scene_duration_mismatch")
+
     cfg = MOODS[mood]
     ass_path = str(ass).replace("'", r"\'")
-    video_filter = (
-        f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,"
-        f"crop={WIDTH}:{HEIGHT},"
+    image_inputs: list[str] = []
+    video_filters: list[str] = []
+
+    for index, (scene, duration) in enumerate(zip(scenes, SCENE_DURATIONS)):
+        image_inputs.extend(["-i", str(scene)])
+        video_filters.append(
+            f"[{index}:v]"
+            f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={WIDTH}:{HEIGHT},setsar=1,"
+            f"tpad=stop_mode=clone:stop_duration={duration},"
+            f"fps=30,trim=duration={duration},setpts=PTS-STARTPTS[v{index}]"
+        )
+
+    concat_inputs = "".join(f"[v{index}]" for index in range(len(scenes)))
+    video_filters.append(
+        f"{concat_inputs}concat=n={len(scenes)}:v=1:a=0[story]"
+    )
+    video_filters.append(
+        "[story]"
         f"eq=brightness={cfg['brightness']}:saturation={cfg['saturation']},"
         "unsharp=5:5:0.35:5:5:0.0,"
         f"subtitles='{ass_path}':fontsdir='/usr/share/fonts',"
-        "format=yuv420p"
+        "format=yuv420p[v]"
     )
+
     if narration:
+        narration_index = len(scenes)
+        music_index = narration_index + 1
+        filter_complex = ";".join(
+            video_filters
+            + [
+                f"[{narration_index}:a]volume=1.10,highpass=f=90[n]",
+                f"[{music_index}:a]volume=0.18[m]",
+                "[n][m]amix=inputs=2:duration=longest:dropout_transition=2,"
+                f"afade=t=out:st={DURATION - 0.8}:d=0.8[a]",
+            ]
+        )
         run(
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            "-loop", "1", "-framerate", "30", "-i", str(background),
+            *image_inputs,
             "-i", str(narration), "-i", str(music),
-            "-filter_complex",
-            "[1:a]volume=1.10,highpass=f=90[n];"
-            "[2:a]volume=0.18[m];"
-            "[n][m]amix=inputs=2:duration=longest:dropout_transition=2,"
-            f"afade=t=out:st={DURATION - 0.8}:d=0.8[a]",
-            "-vf", video_filter,
-            "-map", "0:v:0", "-map", "[a]",
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", "[a]",
             "-t", str(DURATION),
             "-c:v", "libx264", "-preset", "slow", "-crf", "17",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
             "-movflags", "+faststart", str(output),
         )
     else:
+        music_index = len(scenes)
+        filter_complex = ";".join(video_filters)
         run(
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            "-loop", "1", "-framerate", "30", "-i", str(background),
+            *image_inputs,
             "-i", str(music),
-            "-vf", video_filter,
-            "-map", "0:v:0", "-map", "1:a:0",
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", f"{music_index}:a:0",
             "-t", str(DURATION),
             "-c:v", "libx264", "-preset", "slow", "-crf", "17",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
             "-movflags", "+faststart", str(output),
         )
+
 def fit_telegram(path: Path, directory: Path) -> Path:
     if path.stat().st_size <= MAX_TELEGRAM_BYTES:
         return path
@@ -400,10 +630,10 @@ def main() -> int:
     output_root = Path(os.getenv("ORIGINAL_REEL_OUTPUT_DIR") or tempfile.mkdtemp(prefix="original-reel-"))
     output_root.mkdir(parents=True, exist_ok=True)
     if not skip_telegram:
-        send_text(token, chat_id, f"🎬 Creating your {MOODS[mood]['label'].lower()} Reel about: {topic}\n\nWriting the original Hindi script, narration and visual sequence…")
+        send_text(token, chat_id, f"🎬 Creating your {MOODS[mood]['label'].lower()} Reel about: {topic}\n\nWriting the original Hindi script, narration and six-scene visual story…")
 
     data = generate_script(topic, mood, os.getenv("GROQ_API_KEY", "").strip())
-    background = materialize_krishna(output_root / "krishna.jpg")
+    scenes = generate_story_scenes(output_root, mood)
     ass = output_root / "reel.ass"
     music = output_root / "music.wav"
     narration = output_root / "narration.mp3"
@@ -411,12 +641,12 @@ def main() -> int:
     write_ass(data, ass)
     synth_music(music, mood)
     has_tts = asyncio.run(make_tts(data["narration"], narration))
-    render(background, ass, music, narration if has_tts else None, mood, output)
+    render(scenes, ass, music, narration if has_tts else None, mood, output)
     final = fit_telegram(output, output_root)
 
     if not skip_telegram:
         hashtags = " ".join(data["hashtags"])
-        send_video(token, chat_id, final, f"✅ Original {MOODS[mood]['label']} Reel\n\n{data['caption']}\n\n{hashtags}")
+        send_video(token, chat_id, final, f"✅ Original {MOODS[mood]['label']} Story Reel\n\n{data['caption']}\n\n{hashtags}")
         send_text(token, chat_id, "🎵 Music is generated specifically for this Reel in a Krishna-flute-inspired devotional style. No downloaded commercial soundtrack was used.")
     print(json.dumps({
         "ok": True,
@@ -425,6 +655,7 @@ def main() -> int:
         "video": str(final),
         "bytes": final.stat().st_size,
         "tts": has_tts,
+        "story_scenes": len(scenes),
         "hook": data["hook"],
     }, ensure_ascii=False))
     return 0
