@@ -24,6 +24,14 @@ DURATION = 19.2
 WIDTH = 1080
 HEIGHT = 1920
 SCENE_DURATIONS = (2.8, 3.0, 3.0, 3.3, 3.8, 3.3)
+STORY_SCENES = (
+    ASSETS / "story-scenes" / "scene1.jpg",
+    ASSETS / "story-scenes" / "scene2.jpg",
+    ASSETS / "story-scenes" / "scene3.jpg",
+    ASSETS / "story-scenes" / "scene4.jpg",
+    ASSETS / "story-scenes" / "scene5.avif",
+    ASSETS / "story-scenes" / "scene6.avif",
+)
 MAX_TELEGRAM_BYTES = 49 * 1024 * 1024
 KRISHNA_SHA256 = "2e4b59b4afb465314e510707faa0e96de46641cbb67b4b12990ffb3c4eb66c73"
 MOODS = {
@@ -75,14 +83,13 @@ def wrap_words(value: str, width: int = 26) -> str:
     return r"\N".join(lines[:3])
 
 
-def materialize_krishna(path: Path) -> Path:
-    encoded = "".join(part.read_text(encoding="ascii").strip() for part in ASSET_PARTS)
-    payload = base64.b64decode(encoded, validate=True)
-    if hashlib.sha256(payload).hexdigest() != KRISHNA_SHA256:
-        raise RuntimeError("krishna_asset_checksum_failed")
-    path.write_bytes(payload)
-    return path
-
+def get_story_scenes() -> list[Path]:
+    missing = [str(path) for path in STORY_SCENES if not path.is_file()]
+    if missing:
+        raise RuntimeError("story_scene_assets_missing:" + ",".join(missing))
+    if len(STORY_SCENES) != len(SCENE_DURATIONS):
+        raise RuntimeError("story_scene_duration_mismatch")
+    return list(STORY_SCENES)
 
 def fallback_script(topic: str, mood: str) -> dict:
     topic_clean = clean(topic, 90)
@@ -96,12 +103,12 @@ def fallback_script(topic: str, mood: str) -> dict:
     }
     return {
         "hook": hooks[mood],
-        "line1": "मन को बदलने की शुरुआत अक्सर परिस्थिति से नहीं, अपनी प्रतिक्रिया को देखने से होती है।",
-        "line2": "कुछ क्षण रुककर साँस और नाम स्मरण पर ध्यान दें, फिर अगला छोटा सही कदम चुनें।",
-        "line3": "हर विचार को तुरंत सच मानना जरूरी नहीं; मन को दिशा देना भी एक अभ्यास है।",
-        "takeaway": "आज पाँच मिनट फोन अलग रखकर शांत होकर नाम स्मरण करें।",
+        "line1": "हम सोचते हैं कि ज्यादा सोचने से शायद कोई समाधान मिल जाएगा।",
+        "line2": "लेकिन कई बार हम बस उसी चिंता को बार-बार दोहराते रहते हैं।",
+        "line3": "मन को रोकना नहीं; उसे शांत और सही दिशा देना सीखना पड़ता है।",
+        "takeaway": "आज पाँच मिनट फोन दूर रखें, शांत बैठें और नाम स्मरण करें।",
         "closing": "हर विचार का जवाब देना जरूरी नहीं।",
-        "narration": "जब मन किसी बात में उलझ जाए, हर विचार के पीछे भागना जरूरी नहीं। पाँच मिनट रुकिए, फोन अलग रखिए, साँस सामान्य होने दीजिए और नाम स्मरण कीजिए। फिर केवल अगला छोटा सही कदम चुनिए।",
+        "narration": "जब मन किसी बात में उलझ जाए, हम अक्सर उसी विचार को बार-बार दोहराते हैं। मन को रोकना नहीं, दिशा देना सीखिए। आज पाँच मिनट फोन दूर रखकर शांत बैठें और नाम स्मरण करें। हर विचार का जवाब देना जरूरी नहीं।",
         "caption": f"{topic_clean} पर आज की छोटी-सी devotional reflection. पाँच मिनट शांति, स्मरण और एक छोटा सही कदम। 🙏",
         "hashtags": ["#RadheRadhe", "#Bhakti", "#मनकीशांति"],
     }
@@ -143,11 +150,23 @@ Mood: {mood_desc}
 This is NOT a quote from Premanand Ji or any other teacher. Do not attribute statements to a real person.
 Use natural Hindi in Devanagari. Keep it respectful and useful.
 
+The Reel uses SIX different full-screen story images in this exact visual arc:
+1) a restless person awake at night,
+2) Krishna appearing as a calm devotional presence,
+3) the person reflecting alone at sunrise,
+4) Krishna offering reassurance/guidance,
+5) the person putting the phone aside for a simple devotional practice,
+6) a peaceful Krishna blessing/resolution.
+
+Write the six text beats so they feel like one continuous micro-story rather than six unrelated quotes.
+
 Return exactly these fields:
 hook: 5-11 words, specific question/problem, strong from frame 1, no vague clickbait.
-line1, line2, line3: 10-22 Hindi words each, each must add a different useful thought.
-takeaway: 8-16 words, concrete action the viewer can try today.
-closing: 5-12 Hindi words, memorable and shareable, emotionally resonant, no engagement bait.
+line1: 8-18 Hindi words; recognition of the viewer's thought pattern, naturally continuing the hook.
+line2: 8-18 Hindi words; the realization/turn in the story, not a repetition of line1.
+line3: 8-18 Hindi words; spiritual redirection or grounded guidance that resolves the tension.
+takeaway: 8-16 words; a concrete phone-down / pause / naam-smaran action the viewer can try today.
+closing: 5-12 Hindi words; a calm memorable resolution, emotionally resonant, no engagement bait.
 narration: 32-42 Hindi words, smooth spoken script that fits a 19-second Reel and matches the on-screen ideas.
 caption: <=170 characters.
 hashtags: exactly 3; include #RadheRadhe or #Bhakti; no #viral/#trending.
@@ -309,47 +328,76 @@ async def make_tts(text: str, output: Path) -> bool:
         return False
 
 
-def render(background: Path, ass: Path, music: Path, narration: Path | None, mood: str, output: Path) -> None:
-    """Render the approved stable style: no zoompan, no shake, no blur filler, no crossfades."""
+def render(scenes: list[Path], ass: Path, music: Path, narration: Path | None, mood: str, output: Path) -> None:
+    """Render six stable full-screen story frames with hard cuts and no camera shake."""
+    if len(scenes) != len(SCENE_DURATIONS):
+        raise RuntimeError("story_scene_duration_mismatch")
+
     cfg = MOODS[mood]
     ass_path = str(ass).replace("'", r"\'")
-    video_filter = (
-        f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,"
-        f"crop={WIDTH}:{HEIGHT},"
+    image_inputs: list[str] = []
+    video_filters: list[str] = []
+
+    for index, (scene, duration) in enumerate(zip(scenes, SCENE_DURATIONS)):
+        image_inputs.extend(["-i", str(scene)])
+        video_filters.append(
+            f"[{index}:v]"
+            f"scale={WIDTH}:{HEIGHT}:force_original_aspect_ratio=increase:flags=lanczos,"
+            f"crop={WIDTH}:{HEIGHT},setsar=1,"
+            f"tpad=stop_mode=clone:stop_duration={duration},"
+            f"fps=30,trim=duration={duration},setpts=PTS-STARTPTS[v{index}]"
+        )
+
+    concat_inputs = "".join(f"[v{index}]" for index in range(len(scenes)))
+    video_filters.append(
+        f"{concat_inputs}concat=n={len(scenes)}:v=1:a=0[story]"
+    )
+    video_filters.append(
+        "[story]"
         f"eq=brightness={cfg['brightness']}:saturation={cfg['saturation']},"
         "unsharp=5:5:0.35:5:5:0.0,"
         f"subtitles='{ass_path}':fontsdir='/usr/share/fonts',"
-        "format=yuv420p"
+        "format=yuv420p[v]"
     )
+
     if narration:
+        narration_index = len(scenes)
+        music_index = narration_index + 1
+        filter_complex = ";".join(
+            video_filters
+            + [
+                f"[{narration_index}:a]volume=1.10,highpass=f=90[n]",
+                f"[{music_index}:a]volume=0.18[m]",
+                "[n][m]amix=inputs=2:duration=longest:dropout_transition=2,"
+                f"afade=t=out:st={DURATION - 0.8}:d=0.8[a]",
+            ]
+        )
         run(
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            "-loop", "1", "-framerate", "30", "-i", str(background),
+            *image_inputs,
             "-i", str(narration), "-i", str(music),
-            "-filter_complex",
-            "[1:a]volume=1.10,highpass=f=90[n];"
-            "[2:a]volume=0.18[m];"
-            "[n][m]amix=inputs=2:duration=longest:dropout_transition=2,"
-            f"afade=t=out:st={DURATION - 0.8}:d=0.8[a]",
-            "-vf", video_filter,
-            "-map", "0:v:0", "-map", "[a]",
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", "[a]",
             "-t", str(DURATION),
             "-c:v", "libx264", "-preset", "slow", "-crf", "17",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
             "-movflags", "+faststart", str(output),
         )
     else:
+        music_index = len(scenes)
+        filter_complex = ";".join(video_filters)
         run(
             "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-            "-loop", "1", "-framerate", "30", "-i", str(background),
+            *image_inputs,
             "-i", str(music),
-            "-vf", video_filter,
-            "-map", "0:v:0", "-map", "1:a:0",
+            "-filter_complex", filter_complex,
+            "-map", "[v]", "-map", f"{music_index}:a:0",
             "-t", str(DURATION),
             "-c:v", "libx264", "-preset", "slow", "-crf", "17",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
             "-movflags", "+faststart", str(output),
         )
+
 def fit_telegram(path: Path, directory: Path) -> Path:
     if path.stat().st_size <= MAX_TELEGRAM_BYTES:
         return path
@@ -400,10 +448,10 @@ def main() -> int:
     output_root = Path(os.getenv("ORIGINAL_REEL_OUTPUT_DIR") or tempfile.mkdtemp(prefix="original-reel-"))
     output_root.mkdir(parents=True, exist_ok=True)
     if not skip_telegram:
-        send_text(token, chat_id, f"🎬 Creating your {MOODS[mood]['label'].lower()} Reel about: {topic}\n\nWriting the original Hindi script, narration and visual sequence…")
+        send_text(token, chat_id, f"🎬 Creating your {MOODS[mood]['label'].lower()} Reel about: {topic}\n\nWriting the original Hindi script, narration and six-scene visual story…")
 
     data = generate_script(topic, mood, os.getenv("GROQ_API_KEY", "").strip())
-    background = materialize_krishna(output_root / "krishna.jpg")
+    scenes = get_story_scenes()
     ass = output_root / "reel.ass"
     music = output_root / "music.wav"
     narration = output_root / "narration.mp3"
@@ -411,12 +459,12 @@ def main() -> int:
     write_ass(data, ass)
     synth_music(music, mood)
     has_tts = asyncio.run(make_tts(data["narration"], narration))
-    render(background, ass, music, narration if has_tts else None, mood, output)
+    render(scenes, ass, music, narration if has_tts else None, mood, output)
     final = fit_telegram(output, output_root)
 
     if not skip_telegram:
         hashtags = " ".join(data["hashtags"])
-        send_video(token, chat_id, final, f"✅ Original {MOODS[mood]['label']} Reel\n\n{data['caption']}\n\n{hashtags}")
+        send_video(token, chat_id, final, f"✅ Original {MOODS[mood]['label']} Story Reel\n\n{data['caption']}\n\n{hashtags}")
         send_text(token, chat_id, "🎵 Music is generated specifically for this Reel in a Krishna-flute-inspired devotional style. No downloaded commercial soundtrack was used.")
     print(json.dumps({
         "ok": True,
@@ -425,6 +473,7 @@ def main() -> int:
         "video": str(final),
         "bytes": final.stat().st_size,
         "tts": has_tts,
+        "story_scenes": len(scenes),
         "hook": data["hook"],
     }, ensure_ascii=False))
     return 0
