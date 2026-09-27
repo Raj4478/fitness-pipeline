@@ -73,6 +73,43 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fonts-noto-core
           python -m pip install --disable-pip-version-check -q yt-dlp requests
+      - name: Verify six-scene story assets
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import subprocess
+
+          assets = Path("youtube-telegram-bot/assets/story-scenes")
+          scenes = [
+              assets / "scene1.jpg",
+              assets / "scene2.jpg",
+              assets / "scene3.jpg",
+              assets / "scene4.jpg",
+              assets / "scene5.avif",
+              assets / "scene6.avif",
+          ]
+          assert len(scenes) == 6
+          hashes = []
+          for scene in scenes:
+              assert scene.is_file() and scene.stat().st_size > 10000, scene
+              dims = subprocess.run(
+                  [
+                      "ffprobe", "-v", "error",
+                      "-select_streams", "v:0",
+                      "-show_entries", "stream=width,height",
+                      "-of", "csv=p=0:s=x",
+                      str(scene),
+                  ],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+              ).stdout.strip()
+              assert dims == "1080x1920", (scene, dims)
+              hashes.append(hashlib.sha256(scene.read_bytes()).hexdigest())
+          assert len(set(hashes)) == 6, hashes
+          print("Six distinct story scenes verified:", ", ".join(path.name for path in scenes))
+          PY
       - name: Verify editorial API failure fallback
         run: |
           python - <<'PY'
@@ -169,7 +206,9 @@ jobs:
           ORIGINAL_REEL_SKIP_TTS: '1'
           ORIGINAL_REEL_OUTPUT_DIR: ${{ runner.temp }}/original-reel-smoke
         run: |
-          python youtube-telegram-bot/scripts/create_original_reel.py
+          result="$(python youtube-telegram-bot/scripts/create_original_reel.py)"
+          echo "$result"
+          echo "$result" | grep -q '"story_scenes": 6'
           test -s "${ORIGINAL_REEL_OUTPUT_DIR}/original-devotional-reel.mp4"
           dims="$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x "${ORIGINAL_REEL_OUTPUT_DIR}/original-devotional-reel.mp4")"
           test "$dims" = "1080x1920"
