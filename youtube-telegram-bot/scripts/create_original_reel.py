@@ -355,6 +355,97 @@ def _cloudflare_image_request(
     return base64.b64decode(encoded)
 
 
+def _is_cloudflare_content_flag(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "code\":3030" in message or "flagged" in message
+
+
+def _safe_story_prompt(index: int, mood: str) -> str:
+    mood_clean = clean(mood, 32) or "peaceful"
+    common = (
+        "premium vertical 9:16 cinematic Indian devotional fine-art realism, "
+        "tasteful and family-friendly, natural anatomy and hands, crisp facial detail, "
+        "soft cinematic lighting, elegant blue and warm gold palette, no text, no watermark, "
+        "no collage, no split screen, one full-frame scene"
+    )
+    scenes = {
+        1: (
+            "an adult Indian man in simple neutral clothing seated quietly beside a window at night, "
+            "calm reflective expression, phone resting nearby, small diya and tasteful Krishna idol on a side table"
+        ),
+        2: (
+            "serene devotional depiction of Krishna with flute and peacock feather beside a moonlit riverside temple, "
+            "gentle compassionate expression, peaceful atmosphere"
+        ),
+        3: (
+            "an adult Indian man in simple neutral clothing sitting peacefully on river ghat steps at sunrise, "
+            "phone put away, relaxed reflective posture, soft mist and distant temple silhouettes"
+        ),
+        4: (
+            "close-up of natural adult hands placing a smartphone face-down beside a wooden mala and glowing diya, "
+            "clean uncluttered devotional setting, warm realistic light"
+        ),
+        5: (
+            "serene devotional depiction of Krishna at golden dawn beside a calm river, flute and peacock feather, "
+            "gentle blessing gesture, spacious peaceful composition"
+        ),
+    }
+    scene = scenes.get(index, scenes[5])
+    return f"{common}. Scene {index}: {scene}. Emotional tone: {mood_clean}."
+
+
+def _cloudflare_scene_request_with_retry(
+    account_id: str,
+    api_token: str,
+    model: str,
+    prompt: str,
+    seed: int,
+    scene_index: int,
+    mood: str,
+    reference: Path | None = None,
+) -> bytes:
+    try:
+        return _cloudflare_image_request(
+            account_id, api_token, model, prompt, seed, reference
+        )
+    except Exception as exc:
+        if not _is_cloudflare_content_flag(exc):
+            raise
+
+        print(
+            f"Cloudflare content filter flagged scene {scene_index}; retrying with a safer request.",
+            file=sys.stderr,
+        )
+
+        if reference is not None:
+            try:
+                return _cloudflare_image_request(
+                    account_id,
+                    api_token,
+                    model,
+                    prompt,
+                    seed + 1000,
+                    None,
+                )
+            except Exception as retry_exc:
+                if not _is_cloudflare_content_flag(retry_exc):
+                    raise
+                print(
+                    f"Cloudflare scene {scene_index} was still flagged without the reference image; "
+                    "retrying with a neutral scene prompt.",
+                    file=sys.stderr,
+                )
+
+        return _cloudflare_image_request(
+            account_id,
+            api_token,
+            model,
+            _safe_story_prompt(scene_index, mood),
+            seed + 2000,
+            None,
+        )
+
+
 def generate_cloudflare_story_scenes(
     output_root: Path,
     topic: str,
@@ -392,12 +483,14 @@ def generate_cloudflare_story_scenes(
             reference = paths[1]
 
         try:
-            raw = _cloudflare_image_request(
+            raw = _cloudflare_scene_request_with_retry(
                 account_id,
                 api_token,
                 model,
                 prompt,
                 seed_base + index,
+                index,
+                mood,
                 reference,
             )
         except Exception as exc:
@@ -408,12 +501,14 @@ def generate_cloudflare_story_scenes(
                 f"Cloudflare premium hook fallback to 4B: {type(exc).__name__}: {exc}",
                 file=sys.stderr,
             )
-            raw = _cloudflare_image_request(
+            raw = _cloudflare_scene_request_with_retry(
                 account_id,
                 api_token,
                 fast_model,
                 prompt,
                 seed_base + index,
+                index,
+                mood,
                 reference,
             )
 

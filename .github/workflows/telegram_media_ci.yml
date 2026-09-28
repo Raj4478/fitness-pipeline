@@ -181,6 +181,75 @@ jobs:
           print("Cloudflare hybrid FLUX adapter verified:", len(calls), "generation calls")
           PY
 
+      - name: Verify Cloudflare content-filter recovery
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          import io
+          import sys
+          import tempfile
+          from PIL import Image
+
+          scripts = Path("youtube-telegram-bot/scripts").resolve()
+          sys.path.insert(0, str(scripts))
+          import create_original_reel as reel
+
+          def image_payload(index):
+              source = Image.new("RGB", (1080, 1920), (55 + index * 10, 85 + index * 9, 115 + index * 8))
+              buf = io.BytesIO()
+              source.save(buf, format="JPEG", quality=92)
+              return base64.b64encode(buf.getvalue()).decode("ascii")
+
+          calls = []
+
+          class Response:
+              def __init__(self, ok, index):
+                  self.ok = ok
+                  self.status_code = 200 if ok else 400
+                  self.index = index
+                  self.text = (
+                      ""
+                      if ok
+                      else '{"errors":[{"message":"AiError: Your output has been flagged. Please choose another prompt / input image combination","code":3030}]}'
+                  )
+              def json(self):
+                  if self.ok:
+                      return {"success": True, "errors": [], "result": {"image": image_payload(self.index)}}
+                  return {"success": False, "errors": [{"code": 3030, "message": "output flagged"}], "result": {}}
+
+          flagged_once = False
+          def fake_post(url, **kwargs):
+              global flagged_once
+              files = kwargs.get("files", {})
+              calls.append({"url": url, "files": files})
+              # Scene 3 normally has an input reference. Simulate Cloudflare's benign
+              # content-filter false positive on that combination, then allow the
+              # retry without the reference image to succeed.
+              if "input_image_0" in files and not flagged_once:
+                  flagged_once = True
+                  return Response(False, len(calls))
+              return Response(True, len(calls))
+
+          original_post = reel.requests.post
+          reel.requests.post = fake_post
+          try:
+              with tempfile.TemporaryDirectory(prefix="cloudflare-filter-recovery-") as temp:
+                  scenes, mode = reel.generate_cloudflare_story_scenes(
+                      Path(temp), "Mental peace", "peaceful", "account", "token"
+                  )
+                  assert len(scenes) == 5, scenes
+                  assert mode == "cloudflare_hybrid_9b_4b", mode
+                  assert flagged_once, "expected simulated content-filter event"
+                  assert len(calls) == 6, calls
+                  assert "input_image_0" in calls[2]["files"], calls[2]
+                  assert "input_image_0" not in calls[3]["files"], calls[3]
+          finally:
+              reel.requests.post = original_post
+
+          print("Cloudflare benign content-filter recovery verified")
+          PY
+
       - name: Verify premium hook falls back to FLUX 4B
         run: |
           python - <<'PY'
