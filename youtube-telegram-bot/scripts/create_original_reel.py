@@ -36,6 +36,16 @@ MOODS = {
     "reflective": {"label": "Reflective", "brightness": -0.07, "saturation": 0.80, "tempo": 0.78},
     "joyful": {"label": "Joyful", "brightness": 0.05, "saturation": 1.14, "tempo": 1.08},
 }
+
+KRISHNA_VISUAL_GUIDE = (
+    "Lord Krishna portrayed respectfully in recognizable traditional Indian devotional iconography: "
+    "youthful serene face, traditional luminous blue complexion, large compassionate almond-shaped dark eyes, "
+    "gentle peaceful smile, subtle Vaishnava tilak, one elegant peacock feather set naturally in a refined jeweled mukut, "
+    "yellow-gold pitambar with realistic fabric folds, Vaijayanti flower garland, delicate gold kundal and ornaments, "
+    "polished wooden bansuri held naturally with anatomically correct fingers, subtle sacred radiance rather than fantasy glow; "
+    "exactly two arms, balanced human anatomy, symmetrical eyes, natural hands, no extra limbs, no duplicated fingers, "
+    "no fantasy armor, no weapon, no baby depiction, no caricature"
+)
 ASSET_PARTS = [
     ASSETS / "krishna-intro.00a.b64",
     ASSETS / "krishna-intro.00b.b64",
@@ -57,24 +67,31 @@ def ass_escape(value: str) -> str:
     return str(value).replace("\\", r"\\").replace("{", r"\{").replace("}", r"\}").replace("\n", r"\N")
 
 
-def wrap_words(value: str, width: int = 26) -> str:
-    words = clean(value, 240).split()
+def subtitle_lines(value: str, max_chars: int = 28) -> list[str]:
+    """Return one or two balanced subtitle lines without cutting words."""
+    text = clean(value, 180)
+    words = text.split()
     if not words:
-        return ""
-    lines, line = [], []
-    size = 0
-    for word in words:
-        next_size = size + len(word) + (1 if line else 0)
-        if line and next_size > width:
-            lines.append(" ".join(line))
-            line = [word]
-            size = len(word)
-        else:
-            line.append(word)
-            size = next_size
-    if line:
-        lines.append(" ".join(line))
-    return r"\N".join(lines[:3])
+        return []
+    if len(text) <= max_chars or len(words) == 1:
+        return [text]
+
+    best: tuple[float, list[str]] | None = None
+    for split in range(1, len(words)):
+        left = " ".join(words[:split])
+        right = " ".join(words[split:])
+        longest = max(len(left), len(right))
+        overflow = max(0, longest - max_chars)
+        score = abs(len(left) - len(right)) + overflow * 8
+        candidate = [left, right]
+        if best is None or score < best[0]:
+            best = (score, candidate)
+    return best[1] if best else [text]
+
+
+def format_ass_subtitle(value: str) -> str:
+    # Escape each line independently so ASS's \N line-break control is preserved.
+    return r"\N".join(ass_escape(line) for line in subtitle_lines(value))
 
 
 def materialize_krishna(path: Path) -> Path:
@@ -273,31 +290,33 @@ def _story_image_prompts(topic: str, mood: str) -> list[str]:
     mood_clean = clean(mood, 32)
     style = (
         "premium vertical 9:16 cinematic Indian devotional fine-art realism for a high-end Instagram Reel, "
-        "lifelike faces and anatomy, natural hands, crisp eyes, intricate fabric and jewelry detail, "
-        "natural skin texture, cinematic depth, controlled highlights, rich shadow detail, "
-        "sharp focal subject with graceful depth of field, subtle blue and warm gold color harmony, "
-        "emotionally authentic, reverent rather than theatrical, no text, no subtitles, no watermark, "
-        "no collage, no split screen, no poster border, no extra fingers, no distorted hands, "
-        "no low-resolution look, no smeared details, one full-frame scene"
+        "photorealistic yet reverent, lifelike face and anatomy, natural hands, crisp eyes, finely resolved fabric and jewelry, "
+        "cinematic depth, controlled highlights, rich shadow detail, clean subject separation, subtle blue and warm gold harmony, "
+        "emotionally authentic, tasteful temple photography aesthetic, no text, no subtitles, no watermark, no collage, "
+        "no split screen, no poster border, no extra fingers, no distorted hands, no malformed eyes, no low-resolution look"
     )
     person = (
-        "the same anonymous young Indian man in his mid-20s, short dark hair, simple neutral clothing, "
-        "shown respectfully and naturally; preserve his facial identity and clothing across human scenes"
+        "the same anonymous adult Indian man in his mid-20s, short dark hair, simple neutral clothing, "
+        "shown respectfully and naturally; preserve his facial identity, hairstyle and clothing across human scenes"
     )
+    krishna = KRISHNA_VISUAL_GUIDE
     return [
-        f"{style}. Scene 1, premium hook frame: {person}, awake late at night in a quiet bedroom, "
-        f"sitting on the edge of the bed and struggling with {topic_clean}; phone glow nearby, a small tasteful Krishna idol "
-        f"beside a warm diya, moonlight through a window, intimate cinematic framing, {mood_clean} emotional tone.",
-        f"{style}. Scene 2: serene Krishna with flute and peacock feather near a moonlit riverside temple, "
-        f"gentle compassionate presence, calm blue-gold atmosphere, beautiful devotional facial detail, "
-        f"symbolizing reassurance and steadiness around {topic_clean}.",
-        f"{style}. Scene 3: {person}, same face and clothing as Scene 1, alone on peaceful river ghat steps at sunrise, "
-        f"phone put away, quietly reflecting on {topic_clean}; soft mist, temple silhouettes, hopeful transition from cool blue to warm amber.",
-        f"{style}. Scene 4: close-up narrative action, the same person's natural hands placing a smartphone face-down beside a wooden mala "
-        f"and glowing diya, small Krishna presence in the background, a five-minute pause for naam smaran after {topic_clean}, "
-        "warm realistic light, elegant uncluttered composition, accurate fingers and objects.",
-        f"{style}. Scene 5, resolution: peaceful Krishna blessing scene at golden dawn by a calm river, flute and peacock feather, "
-        f"soft flower petals, exquisite face and hand detail, spacious premium composition, clear emotional resolution after {topic_clean}.",
+        f"{style}. Scene 1, premium emotional hook frame: {person}, seated quietly on the edge of a bed at night, "
+        f"reflecting on {topic_clean}; soft phone glow nearby but not in his hand, moonlight through a window, "
+        f"a small traditional Krishna murti with flute and peacock feather beside a warm diya, intimate cinematic framing, "
+        f"{mood_clean} emotional tone, uncluttered composition with clear negative space for subtitles.",
+        f"{style}. Scene 2, hero devotional portrait: {krishna}. Krishna stands near a moonlit Yamuna-inspired riverside temple, "
+        f"holding the bansuri naturally across the body, gentle compassionate gaze toward the viewer, calm blue-gold atmosphere, "
+        f"soft temple lamps and distant flowers, spiritual reassurance connected to {topic_clean}, face and hands are the visual priority.",
+        f"{style}. Scene 3: {person}, same face, hairstyle and clothing as Scene 1, sitting peacefully on river ghat steps at sunrise, "
+        f"phone put away, quietly reflecting on {topic_clean}; soft mist, distant temple silhouettes, restrained hopeful warmth, "
+        "natural posture and clean lower-third negative space.",
+        f"{style}. Scene 4, close narrative action: natural adult hands placing a smartphone face-down beside a wooden tulsi mala "
+        f"and glowing diya, a small traditional Krishna murti softly visible in the background, a simple naam-smaran pause after {topic_clean}; "
+        "accurate fingers, realistic objects, warm devotional light, elegant uncluttered composition.",
+        f"{style}. Scene 5, devotional resolution: {krishna}. Golden dawn beside a calm river; Krishna holds the flute relaxed in one hand "
+        f"while the other hand is raised naturally in a gentle blessing gesture, soft flower petals and distant temple architecture, "
+        f"peaceful direct gaze, spacious composition, clear emotional resolution after {topic_clean}, exquisite face, hands and ornaments.",
     ]
 
 
@@ -490,8 +509,9 @@ def _safe_story_prompt(index: int, mood: str) -> str:
             "calm reflective expression, phone resting nearby, small diya and tasteful Krishna idol on a side table"
         ),
         2: (
-            "serene devotional depiction of Krishna with flute and peacock feather beside a moonlit riverside temple, "
-            "gentle compassionate expression, peaceful atmosphere"
+            "respectful traditional depiction of Lord Krishna with a serene youthful face, traditional blue complexion, "
+            "large compassionate eyes, subtle Vaishnava tilak, peacock feather, yellow pitambar, Vaijayanti garland and wooden flute, "
+            "exactly two arms, natural hands, beside a moonlit riverside temple, gentle peaceful atmosphere"
         ),
         3: (
             "an adult Indian man in simple neutral clothing sitting peacefully on river ghat steps at sunrise, "
@@ -502,8 +522,9 @@ def _safe_story_prompt(index: int, mood: str) -> str:
             "clean uncluttered devotional setting, warm realistic light"
         ),
         5: (
-            "serene devotional depiction of Krishna at golden dawn beside a calm river, flute and peacock feather, "
-            "gentle blessing gesture, spacious peaceful composition"
+            "respectful traditional depiction of Lord Krishna at golden dawn beside a calm river, traditional blue complexion, "
+            "serene youthful face, peacock feather, yellow pitambar and Vaijayanti garland, flute relaxed in one hand, "
+            "other hand raised naturally in blessing, exactly two arms, spacious peaceful composition"
         ),
     }
     scene = scenes.get(index, scenes[5])
@@ -733,11 +754,11 @@ def fallback_script(topic: str, mood: str) -> dict:
     }
     return {
         "hook": hooks[mood],
-        "line1": "हम सोचते हैं कि ज्यादा सोचने से शायद कोई समाधान मिल जाएगा।",
-        "line2": "लेकिन कई बार हम बस उसी चिंता को बार-बार दोहराते रहते हैं।",
-        "line3": "मन को रोकना नहीं; उसे शांत और सही दिशा देना सीखना पड़ता है।",
-        "takeaway": "आज पाँच मिनट फोन दूर रखें, शांत बैठें और नाम स्मरण करें।",
-        "closing": "हर विचार का जवाब देना जरूरी नहीं।",
+        "line1": "ज़्यादा सोचने से हर बार समाधान नहीं मिलता।",
+        "line2": "कई बार मन बस वही चिंता दोहराता रहता है।",
+        "line3": "मन को रोकना नहीं, दिशा देना सीखें।",
+        "takeaway": "पाँच मिनट फोन दूर रखें और नाम स्मरण करें।",
+        "closing": "हर विचार का जवाब देना ज़रूरी नहीं।",
         "caption": f"{topic_clean} पर आज की छोटी-सी devotional reflection. पाँच मिनट शांति, स्मरण और एक छोटा सही कदम। 🙏",
         "hashtags": ["#RadheRadhe", "#Bhakti", "#मनकीशांति"],
     }
@@ -785,15 +806,17 @@ The Reel uses FIVE different full-screen story images in this exact visual arc:
 4) the person putting the phone aside for a simple devotional practice,
 5) a peaceful Krishna blessing/resolution.
 
-Write six text beats as one continuous micro-story. The line3 and takeaway beats share image 4, so keep both especially concise and complementary.
+Write six text beats as one continuous micro-story. These are ON-SCREEN SUBTITLES with no voice narration.
+Each beat must be instantly readable on a phone, use simple natural Hindi, avoid long clauses, and fit comfortably in no more than TWO subtitle lines.
+Do not use English words when a natural Hindi alternative exists. The line3 and takeaway beats share image 4, so keep them especially concise and complementary.
 
 Return exactly these fields:
-hook: 5-11 words, specific question/problem, strong from frame 1, no vague clickbait.
-line1: 8-18 Hindi words; recognition of the viewer's thought pattern, naturally continuing the hook.
-line2: 8-18 Hindi words; the realization/turn in the story, not a repetition of line1.
-line3: 8-18 Hindi words; spiritual redirection or grounded guidance that resolves the tension.
-takeaway: 8-16 words; a concrete phone-down / pause / naam-smaran action the viewer can try today.
-closing: 5-12 Hindi words; a calm memorable resolution, emotionally resonant, no engagement bait.
+hook: 4-8 Hindi words, specific emotional question/problem, immediate and natural, no vague clickbait.
+line1: 6-11 Hindi words; recognition of the viewer's thought pattern, continuing the hook.
+line2: 6-11 Hindi words; the realization/turn in the story, not a repetition.
+line3: 5-10 Hindi words; grounded spiritual redirection that resolves the tension.
+takeaway: 6-11 Hindi words; one concrete phone-down / pause / naam-smaran action.
+closing: 4-8 Hindi words; calm memorable resolution, emotionally resonant, no engagement bait.
 caption: <=170 characters.
 hashtags: exactly 3; include #RadheRadhe or #Bhakti; no #viral/#trending.
 
@@ -864,7 +887,7 @@ def write_ass(data: dict, path: Path) -> None:
                 centis = 0
             minutes, secs = divmod(whole, 60)
             return f"0:{minutes:02d}:{secs:02d}.{centis:02d}"
-        return f"Dialogue: 0,{ts(start)},{ts(end)},{style},,0,0,0,,{ass_escape(wrap_words(text))}"
+        return f"Dialogue: 0,{ts(start)},{ts(end)},{style},,0,0,0,,{format_ass_subtitle(text)}"
 
     content = """[Script Info]
 ScriptType: v4.00+
@@ -875,10 +898,10 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
-Style: Hook,Noto Sans Devanagari,78,&H00F4E7C8,&H000000FF,&H00101824,&H82050A12,-1,0,0,0,100,100,0,0,3,4,1,5,78,78,0,1
-Style: Body,Noto Sans Devanagari,58,&H00FFF8EA,&H000000FF,&H00101824,&H88050A12,-1,0,0,0,100,100,0,0,3,4,1,5,92,92,0,1
-Style: Take,Noto Sans Devanagari,62,&H00F4E7C8,&H000000FF,&H00101824,&H88050A12,-1,0,0,0,100,100,0,0,3,4,1,5,86,86,0,1
-Style: Close,Noto Sans Devanagari,68,&H00FFFFFF,&H000000FF,&H00101824,&H88050A12,-1,0,0,0,100,100,0,0,3,4,1,5,86,86,0,1
+Style: Hook,Noto Sans Devanagari,76,&H0037D7FF,&H000000FF,&H00101018,&H70000000,-1,0,0,0,100,100,0.4,0,1,5,2,2,104,104,300,1
+Style: Body,Noto Sans Devanagari,62,&H00FFFDF7,&H000000FF,&H00101018,&H70000000,-1,0,0,0,100,100,0.2,0,1,5,2,2,108,108,300,1
+Style: Take,Noto Sans Devanagari,64,&H0037D7FF,&H000000FF,&H00101018,&H70000000,-1,0,0,0,100,100,0.2,0,1,5,2,2,108,108,300,1
+Style: Close,Noto Sans Devanagari,68,&H00FFFFFF,&H000000FF,&H00101018,&H70000000,-1,0,0,0,100,100,0.3,0,1,5,2,2,108,108,300,1
 
 [Events]
 Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
