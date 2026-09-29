@@ -314,7 +314,7 @@ def _save_story_frame(raw: bytes, output_root: Path, index: int) -> Path:
 def _cloudflare_reference_bytes(reference: Path) -> bytes:
     with Image.open(reference) as image:
         ref = image.convert("RGB")
-        ref.thumbnail((512, 512), Image.Resampling.LANCZOS)
+        ref.thumbnail((504, 504), Image.Resampling.LANCZOS)
         buffer = BytesIO()
         ref.save(buffer, "JPEG", quality=90, optimize=True)
         return buffer.getvalue()
@@ -364,7 +364,7 @@ def _cloudflare_image_request_once(
         endpoint,
         headers={"Authorization": f"Bearer {api_token}"},
         files=fields,
-        timeout=120,
+        timeout=75,
     )
     if not response.ok:
         code = _cloudflare_error_code(response)
@@ -396,7 +396,7 @@ def _cloudflare_image_request(
     seed: int,
     reference: Path | None = None,
 ) -> bytes:
-    delays = (0, 8, 18, 32)
+    delays = (0, 8, 20)
     last_exc: Exception | None = None
 
     for attempt, delay in enumerate(delays, start=1):
@@ -457,7 +457,7 @@ def _cloudflare_schnell_request(
             "num_steps": 4,
             "seed": seed,
         },
-        timeout=120,
+        timeout=75,
     )
     if not response.ok:
         code = _cloudflare_error_code(response)
