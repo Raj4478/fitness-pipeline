@@ -250,6 +250,75 @@ jobs:
           print("Cloudflare benign content-filter recovery verified")
           PY
 
+      - name: Verify Cloudflare capacity retry and emergency model
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          import io
+          import sys
+          from PIL import Image
+
+          scripts = Path("youtube-telegram-bot/scripts").resolve()
+          sys.path.insert(0, str(scripts))
+          import create_original_reel as reel
+
+          def image_payload():
+              source = Image.new("RGB", (1080, 1920), (70, 100, 130))
+              buf = io.BytesIO()
+              source.save(buf, format="JPEG", quality=92)
+              return base64.b64encode(buf.getvalue()).decode("ascii")
+
+          calls = []
+
+          class CapacityResponse:
+              ok = False
+              status_code = 429
+              text = '{"errors":[{"message":"AiError: Capacity temporarily exceeded, please try again.","code":3040}]}'
+              def json(self):
+                  return {"success": False, "errors": [{"code": 3040, "message": "Capacity temporarily exceeded, please try again."}]}
+
+          class SuccessResponse:
+              ok = True
+              status_code = 200
+              text = ""
+              def json(self):
+                  return {"success": True, "errors": [], "result": {"image": image_payload()}}
+
+          def fake_post(url, **kwargs):
+              calls.append({"url": url, "kwargs": kwargs})
+              if url.endswith("flux-1-schnell"):
+                  return SuccessResponse()
+              return CapacityResponse()
+
+          original_post = reel.requests.post
+          original_sleep = reel.time.sleep
+          reel.requests.post = fake_post
+          reel.time.sleep = lambda _seconds: None
+          try:
+              raw, actual_model = reel._cloudflare_scene_request_with_retry(
+                  "account",
+                  "token",
+                  "@cf/black-forest-labs/flux-2-klein-4b",
+                  "safe devotional scene",
+                  123,
+                  3,
+                  "peaceful",
+                  None,
+              )
+              assert raw, "expected emergency image bytes"
+              assert actual_model == "@cf/black-forest-labs/flux-1-schnell", actual_model
+              klein_calls = [call for call in calls if call["url"].endswith("flux-2-klein-4b")]
+              schnell_calls = [call for call in calls if call["url"].endswith("flux-1-schnell")]
+              assert len(klein_calls) == 3, calls
+              assert len(schnell_calls) == 1, calls
+          finally:
+              reel.requests.post = original_post
+              reel.time.sleep = original_sleep
+
+          print("Cloudflare 3040 capacity recovery verified")
+          PY
+
       - name: Verify premium hook falls back to FLUX 4B
         run: |
           python - <<'PY'
