@@ -38,6 +38,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_IMAGE_MODEL_PREMIUM: '@cf/black-forest-labs/flux-2-klein-9b'
       CLOUDFLARE_IMAGE_MODEL_FAST: '@cf/black-forest-labs/flux-2-klein-4b'
+      CLOUDFLARE_IMAGE_MODEL_EMERGENCY: '@cf/black-forest-labs/flux-1-schnell'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

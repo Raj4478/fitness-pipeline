@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import wave
 from array import array
 from pathlib import Path
@@ -310,7 +311,30 @@ def _save_story_frame(raw: bytes, output_root: Path, index: int) -> Path:
         return path
 
 
-def _cloudflare_image_request(
+def _cloudflare_reference_bytes(reference: Path) -> bytes:
+    with Image.open(reference) as image:
+        ref = image.convert("RGB")
+        ref.thumbnail((504, 504), Image.Resampling.LANCZOS)
+        buffer = BytesIO()
+        ref.save(buffer, "JPEG", quality=90, optimize=True)
+        return buffer.getvalue()
+
+
+def _cloudflare_error_code(response) -> int | None:
+    try:
+        payload = response.json()
+    except Exception:
+        return None
+    errors = payload.get("errors") or []
+    if not errors:
+        return None
+    try:
+        return int(errors[0].get("code"))
+    except Exception:
+        return None
+
+
+def _cloudflare_image_request_once(
     account_id: str,
     api_token: str,
     model: str,
@@ -329,20 +353,24 @@ def _cloudflare_image_request(
         "guidance": (None, "4.0"),
     }
     if reference is not None:
-        fields["input_image_0"] = (reference.name, reference.read_bytes(), "image/jpeg")
+        fields["input_image_0"] = (
+            reference.name,
+            _cloudflare_reference_bytes(reference),
+            "image/jpeg",
+        )
 
-    endpoint = (
-        f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
-    )
+    endpoint = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
     response = requests.post(
         endpoint,
         headers={"Authorization": f"Bearer {api_token}"},
         files=fields,
-        timeout=300,
+        timeout=75,
     )
     if not response.ok:
+        code = _cloudflare_error_code(response)
         raise RuntimeError(
-            f"cloudflare_{model.rsplit('/', 1)[-1]}_{response.status_code}:{response.text[:260]}"
+            f"cloudflare_{model.rsplit('/', 1)[-1]}_{response.status_code}_code_{code}:"
+            f"{response.text[:260]}"
         )
     payload = response.json()
     if not payload.get("success"):
@@ -355,9 +383,97 @@ def _cloudflare_image_request(
     return base64.b64decode(encoded)
 
 
+def _is_cloudflare_capacity_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "code_3040" in message or "capacity temporarily exceeded" in message
+
+
+def _cloudflare_image_request(
+    account_id: str,
+    api_token: str,
+    model: str,
+    prompt: str,
+    seed: int,
+    reference: Path | None = None,
+) -> bytes:
+    delays = (0, 8, 20)
+    last_exc: Exception | None = None
+
+    for attempt, delay in enumerate(delays, start=1):
+        if delay:
+            print(
+                f"Cloudflare capacity retry {attempt}/{len(delays)} for {model.rsplit('/', 1)[-1]} "
+                f"after {delay}s.",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+        try:
+            return _cloudflare_image_request_once(
+                account_id, api_token, model, prompt, seed + attempt - 1, reference
+            )
+        except requests.Timeout as exc:
+            last_exc = exc
+            if attempt == len(delays):
+                raise RuntimeError(
+                    f"cloudflare_{model.rsplit('/', 1)[-1]}_timeout_after_{len(delays)}_attempts"
+                ) from exc
+            print(
+                f"Cloudflare request timed out on attempt {attempt}; retrying.",
+                file=sys.stderr,
+            )
+        except Exception as exc:
+            last_exc = exc
+            if not _is_cloudflare_capacity_error(exc) or attempt == len(delays):
+                raise
+            print(
+                f"Cloudflare reported temporary capacity exhaustion on attempt {attempt}; retrying.",
+                file=sys.stderr,
+            )
+
+    raise RuntimeError("cloudflare_retry_exhausted") from last_exc
+
+
+def _cloudflare_schnell_request(
+    account_id: str,
+    api_token: str,
+    prompt: str,
+    seed: int,
+) -> bytes:
+    model = os.getenv(
+        "CLOUDFLARE_IMAGE_MODEL_EMERGENCY",
+        "@cf/black-forest-labs/flux-1-schnell",
+    ).strip() or "@cf/black-forest-labs/flux-1-schnell"
+    endpoint = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}"
+    response = requests.post(
+        endpoint,
+        headers={
+            "Authorization": f"Bearer {api_token}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "prompt": prompt,
+            "width": WIDTH,
+            "height": HEIGHT,
+            "num_steps": 4,
+            "seed": seed,
+        },
+        timeout=75,
+    )
+    if not response.ok:
+        code = _cloudflare_error_code(response)
+        raise RuntimeError(
+            f"cloudflare_emergency_{response.status_code}_code_{code}:{response.text[:260]}"
+        )
+    payload = response.json()
+    encoded = (payload.get("result") or {}).get("image")
+    if not encoded:
+        raise RuntimeError("cloudflare_emergency_image_missing_payload")
+    return base64.b64decode(encoded)
+
+
 def _is_cloudflare_content_flag(exc: Exception) -> bool:
     message = str(exc).lower()
-    return "code\":3030" in message or "flagged" in message
+    return "code_3030" in message or "code\":3030" in message or "flagged" in message
 
 
 def _safe_story_prompt(index: int, mood: str) -> str:
@@ -403,47 +519,98 @@ def _cloudflare_scene_request_with_retry(
     scene_index: int,
     mood: str,
     reference: Path | None = None,
-) -> bytes:
+) -> tuple[bytes, str]:
     try:
-        return _cloudflare_image_request(
-            account_id, api_token, model, prompt, seed, reference
+        return (
+            _cloudflare_image_request(
+                account_id, api_token, model, prompt, seed, reference
+            ),
+            model,
         )
     except Exception as exc:
+        if _is_cloudflare_capacity_error(exc) or "timeout_after_" in str(exc):
+            print(
+                f"Cloudflare {model.rsplit('/', 1)[-1]} remained unavailable for scene {scene_index}; "
+                "using FLUX.1 Schnell emergency generation.",
+                file=sys.stderr,
+            )
+            return (
+                _cloudflare_schnell_request(
+                    account_id,
+                    api_token,
+                    _safe_story_prompt(scene_index, mood),
+                    seed + 5000,
+                ),
+                "@cf/black-forest-labs/flux-1-schnell",
+            )
         if not _is_cloudflare_content_flag(exc):
             raise
 
         print(
-            f"Cloudflare content filter flagged scene {scene_index}; retrying with a safer request.",
+            f"Cloudflare content filter flagged scene {scene_index}; retrying without reference.",
             file=sys.stderr,
         )
 
-        if reference is not None:
-            try:
-                return _cloudflare_image_request(
+        try:
+            return (
+                _cloudflare_image_request(
                     account_id,
                     api_token,
                     model,
                     prompt,
                     seed + 1000,
                     None,
-                )
-            except Exception as retry_exc:
-                if not _is_cloudflare_content_flag(retry_exc):
-                    raise
+                ),
+                model,
+            )
+        except Exception as retry_exc:
+            if _is_cloudflare_capacity_error(retry_exc) or "timeout_after_" in str(retry_exc):
                 print(
-                    f"Cloudflare scene {scene_index} was still flagged without the reference image; "
-                    "retrying with a neutral scene prompt.",
+                    f"Cloudflare capacity unavailable during scene {scene_index} safety retry; "
+                    "using FLUX.1 Schnell emergency generation.",
                     file=sys.stderr,
                 )
+                return (
+                    _cloudflare_schnell_request(
+                        account_id,
+                        api_token,
+                        _safe_story_prompt(scene_index, mood),
+                        seed + 6000,
+                    ),
+                    "@cf/black-forest-labs/flux-1-schnell",
+                )
+            if not _is_cloudflare_content_flag(retry_exc):
+                raise
 
-        return _cloudflare_image_request(
-            account_id,
-            api_token,
-            model,
-            _safe_story_prompt(scene_index, mood),
-            seed + 2000,
-            None,
+        print(
+            f"Cloudflare scene {scene_index} was still flagged; retrying with neutral scene prompt.",
+            file=sys.stderr,
         )
+        try:
+            return (
+                _cloudflare_image_request(
+                    account_id,
+                    api_token,
+                    model,
+                    _safe_story_prompt(scene_index, mood),
+                    seed + 2000,
+                    None,
+                ),
+                model,
+            )
+        except Exception as safe_exc:
+            if _is_cloudflare_capacity_error(safe_exc) or "timeout_after_" in str(safe_exc):
+                return (
+                    _cloudflare_schnell_request(
+                        account_id,
+                        api_token,
+                        _safe_story_prompt(scene_index, mood),
+                        seed + 7000,
+                    ),
+                    "@cf/black-forest-labs/flux-1-schnell",
+                )
+            raise
+
 
 
 def generate_cloudflare_story_scenes(
@@ -473,6 +640,7 @@ def generate_cloudflare_story_scenes(
     seed_base = int(hashlib.sha256(f"{mood}:{topic}".encode("utf-8")).hexdigest()[:8], 16)
     paths: list[Path] = []
     premium_used = True
+    emergency_used = False
 
     for index, prompt in enumerate(prompts, start=1):
         model = premium_model if index == 1 else fast_model
@@ -483,7 +651,7 @@ def generate_cloudflare_story_scenes(
             reference = paths[1]
 
         try:
-            raw = _cloudflare_scene_request_with_retry(
+            raw, actual_model = _cloudflare_scene_request_with_retry(
                 account_id,
                 api_token,
                 model,
@@ -493,6 +661,7 @@ def generate_cloudflare_story_scenes(
                 mood,
                 reference,
             )
+            emergency_used = emergency_used or actual_model.endswith("flux-1-schnell")
         except Exception as exc:
             if index != 1 or model == fast_model:
                 raise
@@ -501,7 +670,7 @@ def generate_cloudflare_story_scenes(
                 f"Cloudflare premium hook fallback to 4B: {type(exc).__name__}: {exc}",
                 file=sys.stderr,
             )
-            raw = _cloudflare_scene_request_with_retry(
+            raw, actual_model = _cloudflare_scene_request_with_retry(
                 account_id,
                 api_token,
                 fast_model,
@@ -511,6 +680,7 @@ def generate_cloudflare_story_scenes(
                 mood,
                 reference,
             )
+            emergency_used = emergency_used or actual_model.endswith("flux-1-schnell")
 
         paths.append(_save_story_frame(raw, output_root, index))
 
@@ -519,7 +689,11 @@ def generate_cloudflare_story_scenes(
     if len({hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}) != 5:
         raise RuntimeError("cloudflare_story_scenes_not_unique")
 
-    return paths, ("cloudflare_hybrid_9b_4b" if premium_used else "cloudflare_4b")
+    if emergency_used:
+        mode = "cloudflare_hybrid_with_schnell"
+    else:
+        mode = "cloudflare_hybrid_9b_4b" if premium_used else "cloudflare_4b"
+    return paths, mode
 
 
 def build_story_scenes(
