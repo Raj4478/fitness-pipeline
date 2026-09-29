@@ -100,6 +100,59 @@ jobs:
               print("Five generated story scenes verified:", ", ".join(path.name for path in scenes))
           PY
 
+      - name: Verify premium subtitles and deity prompts
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+          import tempfile
+
+          scripts = Path("youtube-telegram-bot/scripts").resolve()
+          sys.path.insert(0, str(scripts))
+          import create_original_reel as reel
+
+          lines = reel.subtitle_lines("ज़्यादा सोचने से हर बार समाधान नहीं मिलता।")
+          assert 1 <= len(lines) <= 2, lines
+          formatted = reel.format_ass_subtitle("ज़्यादा सोचने से हर बार समाधान नहीं मिलता।")
+          assert "\\N" in formatted, formatted
+          assert "\\\\N" not in formatted, formatted
+
+          prompts = reel._story_image_prompts("Mental peace", "peaceful")
+          assert len(prompts) == 5
+          god_prompt = prompts[1]
+          for phrase in [
+              "traditional luminous blue complexion",
+              "Vaishnava tilak",
+              "peacock feather",
+              "yellow-gold pitambar",
+              "Vaijayanti",
+              "bansuri",
+              "exactly two arms",
+          ]:
+              assert phrase in god_prompt, (phrase, god_prompt)
+
+          with tempfile.TemporaryDirectory(prefix="subtitle-ass-") as temp:
+              path = Path(temp) / "reel.ass"
+              reel.write_ass(
+                  {
+                      "hook": "मन इतना बेचैन क्यों है?",
+                      "line1": "हर चिंता का जवाब अभी नहीं चाहिए।",
+                      "line2": "शांत मन में रास्ता साफ दिखता है।",
+                      "line3": "मन को धीरे से नाम में लगाएँ।",
+                      "takeaway": "पाँच मिनट फोन दूर रखकर नाम स्मरण करें।",
+                      "closing": "शांति भीतर लौटने से आती है।",
+                  },
+                  path,
+              )
+              ass = path.read_text(encoding="utf-8")
+              assert "Style: Hook,Noto Sans Devanagari,76" in ass
+              assert "Style: Body,Noto Sans Devanagari,62" in ass
+              assert "BorderStyle" in ass
+              assert "\\\\N" not in ass
+
+          print("Premium subtitle layout and Krishna visual guide verified")
+          PY
+
       - name: Verify Cloudflare FLUX story image adapter
         run: |
           python - <<'PY'
